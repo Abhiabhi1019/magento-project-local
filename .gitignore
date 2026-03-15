@@ -1,0 +1,11 @@
+magento/vendor/
+magento/generated/
+magento/var/
+magento/pub/static/
+magento/pub/media/
+
+magento/app/etc/env.php
+magento/auth.json
+
+node_modules/
+*.log
