@@ -10,31 +10,31 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
+                git branch: 'main',
+                url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
             }
         }
 
         stage('Verify Workspace') {
             steps {
                 sh '''
-                echo "Current Directory:"
+                echo "Workspace:"
                 pwd
-                echo "Project Files:"
                 ls -la
                 '''
             }
         }
 
-        stage('Check Docker Installation') {
+        stage('Check Docker') {
             steps {
                 sh '''
                 docker --version
-                docker compose version
+                docker compose version || true
                 '''
             }
         }
 
-        stage('Stop Existing Containers') {
+        stage('Stop Old Containers') {
             steps {
                 sh '''
                 echo "Stopping old containers..."
@@ -43,10 +43,10 @@ pipeline {
             }
         }
 
-        stage('Build Docker Images') {
+        stage('Build Containers') {
             steps {
                 sh '''
-                echo "Building Docker images..."
+                echo "Building containers..."
                 docker compose build
                 '''
             }
@@ -61,7 +61,7 @@ pipeline {
             }
         }
 
-        stage('Verify Running Containers') {
+        stage('Verify Containers') {
             steps {
                 sh '''
                 echo "Running containers:"
@@ -74,10 +74,10 @@ pipeline {
 
     post {
         success {
-            echo 'Magento Docker deployment completed successfully!'
+            echo 'Magento deployment completed successfully'
         }
         failure {
-            echo 'Pipeline failed. Check logs.'
+            echo 'Pipeline failed. Check logs above.'
         }
     }
 }
