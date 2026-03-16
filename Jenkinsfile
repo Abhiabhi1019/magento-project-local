@@ -5,14 +5,14 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                checkout scm
+                git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
             }
         }
 
-        stage('Verify Files') {
+        stage('Check Workspace') {
             steps {
                 sh 'pwd'
-                sh 'ls -l'
+                sh 'ls -la'
             }
         }
 
@@ -41,10 +41,11 @@ pipeline {
             }
         }
 
-        stage('Running Containers') {
+        stage('List Running Containers') {
             steps {
                 sh 'docker ps'
             }
         }
+
     }
 }
