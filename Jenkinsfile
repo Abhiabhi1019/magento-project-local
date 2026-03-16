@@ -16,8 +16,9 @@ pipeline {
             }
         }
 
-        stage('Verify Files') {
+        stage('Check Files') {
             steps {
+                sh 'pwd'
                 sh 'ls -l'
             }
         }
@@ -30,7 +31,7 @@ pipeline {
 
         stage('Build Containers') {
             steps {
-                sh 'docker-compose build --no-cache'
+                sh 'docker-compose build'
             }
         }
 
