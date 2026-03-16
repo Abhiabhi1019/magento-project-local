@@ -5,7 +5,7 @@ pipeline {
 
         stage('Clone Repository') {
             steps {
-                git 'https://github.com/Abhiabhi1019/magento-project-local.git'
+                git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
             }
         }
 
@@ -28,5 +28,4 @@ pipeline {
         }
 
     }
-
 }
