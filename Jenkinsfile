@@ -9,22 +9,21 @@ pipeline {
             }
         }
 
-        stage('Build Docker Containers') {
+        stage('Stop Old Containers') {
             steps {
-                sh 'docker-compose build'
+                sh 'docker compose down || true'
+            }
+        }
+
+        stage('Build Containers') {
+            steps {
+                sh 'docker compose build'
             }
         }
 
         stage('Start Containers') {
             steps {
-                sh 'docker-compose up -d'
-            }
-        }
-
-        stage('Run Magento Deployment') {
-            steps {
-                sh 'chmod +x deploy.sh'
-                sh './deploy.sh'
+                sh 'docker compose up -d'
             }
         }
 
