@@ -12,7 +12,7 @@ pipeline {
         stage('Verify Workspace') {
             steps {
                 sh '''
-                echo Workspace
+                echo "Workspace:"
                 pwd
                 ls -la
                 '''
