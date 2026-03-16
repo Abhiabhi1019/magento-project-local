@@ -19,25 +19,25 @@ pipeline {
         stage('Check Docker') {
             steps {
                 sh 'docker --version'
-                sh 'docker compose version'
+                sh 'docker-compose --version'
             }
         }
 
         stage('Stop Old Containers') {
             steps {
-                sh 'docker compose down || true'
+                sh 'docker-compose down || true'
             }
         }
 
         stage('Build Containers') {
             steps {
-                sh 'docker compose build'
+                sh 'docker-compose build'
             }
         }
 
         stage('Start Containers') {
             steps {
-                sh 'docker compose up -d'
+                sh 'docker-compose up -d'
             }
         }
 
