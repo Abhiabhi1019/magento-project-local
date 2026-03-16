@@ -11,18 +11,19 @@ pipeline {
 
         stage('Build Docker Containers') {
             steps {
-                sh 'docker compose build'
+                sh 'docker-compose build'
             }
         }
 
         stage('Start Containers') {
             steps {
-                sh 'docker compose up -d'
+                sh 'docker-compose up -d'
             }
         }
 
         stage('Run Magento Deployment') {
             steps {
+                sh 'chmod +x deploy.sh'
                 sh './deploy.sh'
             }
         }
