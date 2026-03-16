@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    environment {
+        DOCKER_BUILDKIT = '1'
+        COMPOSE_DOCKER_CLI_BUILD = '1'
+    }
+
     stages {
 
         stage('Checkout Code') {
@@ -9,43 +14,70 @@ pipeline {
             }
         }
 
-        stage('Check Workspace') {
+        stage('Verify Workspace') {
             steps {
-                sh 'pwd'
-                sh 'ls -la'
+                sh '''
+                echo "Current Directory:"
+                pwd
+                echo "Project Files:"
+                ls -la
+                '''
             }
         }
 
-        stage('Check Docker') {
+        stage('Check Docker Installation') {
             steps {
-                sh 'docker --version'
-                sh 'docker-compose --version'
+                sh '''
+                docker --version
+                docker compose version
+                '''
             }
         }
 
-        stage('Stop Old Containers') {
+        stage('Stop Existing Containers') {
             steps {
-                sh 'docker-compose down || true'
-                sh 'docker stop $(docker ps -q) || true'
+                sh '''
+                echo "Stopping old containers..."
+                docker compose down || true
+                '''
             }
         }
 
-        stage('Build Containers') {
+        stage('Build Docker Images') {
             steps {
-                sh 'docker-compose build'
+                sh '''
+                echo "Building Docker images..."
+                docker compose build
+                '''
             }
         }
 
         stage('Start Containers') {
             steps {
-                sh 'docker-compose up -d'
+                sh '''
+                echo "Starting containers..."
+                docker compose up -d
+                '''
             }
         }
 
-        stage('List Running Containers') {
+        stage('Verify Running Containers') {
             steps {
-                sh 'docker ps'
+                sh '''
+                echo "Running containers:"
+                docker ps
+                '''
             }
+        }
+
+    }
+
+    post {
+        success {
+            echo 'Magento Docker deployment completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed. Check logs.'
         }
     }
 }
