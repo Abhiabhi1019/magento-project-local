@@ -3,6 +3,13 @@ pipeline {
 
     stages {
 
+        stage('Check Docker') {
+            steps {
+                sh 'docker --version'
+                sh 'docker compose version'
+            }
+        }
+
         stage('Clone Repository') {
             steps {
                 git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
@@ -24,6 +31,12 @@ pipeline {
         stage('Start Containers') {
             steps {
                 sh 'docker compose up -d'
+            }
+        }
+
+        stage('List Running Containers') {
+            steps {
+                sh 'docker ps'
             }
         }
 
