@@ -3,23 +3,23 @@ pipeline {
 
     stages {
 
+        stage('Checkout Code') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Verify Files') {
+            steps {
+                sh 'pwd'
+                sh 'ls -l'
+            }
+        }
+
         stage('Check Docker') {
             steps {
                 sh 'docker --version'
                 sh 'docker-compose --version'
-            }
-        }
-
-        stage('Clone Repository') {
-            steps {
-                git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
-            }
-        }
-
-        stage('Check Files') {
-            steps {
-                sh 'pwd'
-                sh 'ls -l'
             }
         }
 
@@ -41,11 +41,10 @@ pipeline {
             }
         }
 
-        stage('List Running Containers') {
+        stage('Running Containers') {
             steps {
                 sh 'docker ps'
             }
         }
-
     }
 }
