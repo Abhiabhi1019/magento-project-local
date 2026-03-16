@@ -16,6 +16,12 @@ pipeline {
             }
         }
 
+        stage('Verify Files') {
+            steps {
+                sh 'ls -l'
+            }
+        }
+
         stage('Stop Old Containers') {
             steps {
                 sh 'docker-compose down || true'
@@ -24,7 +30,7 @@ pipeline {
 
         stage('Build Containers') {
             steps {
-                sh 'docker-compose build'
+                sh 'docker-compose build --no-cache'
             }
         }
 
