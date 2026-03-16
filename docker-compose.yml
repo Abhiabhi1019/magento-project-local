@@ -5,7 +5,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./magento:/var/www/html
+      - magento_data:/var/www/html
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - php
@@ -13,7 +13,7 @@ services:
   php:
     build: ./docker/php
     volumes:
-      - ./magento:/var/www/html
+      - magento_data:/var/www/html
     depends_on:
       - db
       - redis
@@ -41,3 +41,6 @@ services:
       - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
       - "9201:9200"
+
+volumes:
+  magento_data:
