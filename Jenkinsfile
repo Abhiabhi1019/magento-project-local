@@ -26,6 +26,7 @@ pipeline {
         stage('Stop Old Containers') {
             steps {
                 sh 'docker-compose down || true'
+                sh 'docker stop $(docker ps -q) || true'
             }
         }
 
