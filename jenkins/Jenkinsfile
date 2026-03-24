@@ -13,30 +13,42 @@ pipeline {
             }
         }
 
-        stage('Build & Start Containers') {
+        stage('Clean Old Containers') {
             steps {
                 sh '''
-                docker compose down || true
-                docker compose build
-                docker compose up -d
+                echo "Cleaning old containers..."
+                docker compose down -v || true
+                docker system prune -f || true
                 '''
             }
         }
 
-        stage('Wait for Services') {
+        stage('Build & Start Containers') {
             steps {
                 sh '''
-                echo "Waiting for DB..."
+                docker compose build
+                docker compose up -d
+                docker compose ps
+                '''
+            }
+        }
+
+        stage('Wait for DB') {
+            steps {
+                sh '''
                 until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
                     sleep 5
                 done
+                '''
+            }
+        }
 
-                echo "Waiting for OpenSearch..."
+        stage('Wait for OpenSearch') {
+            steps {
+                sh '''
                 until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
                     sleep 5
                 done
-
-                echo "Services ready"
                 '''
             }
         }
@@ -52,17 +64,13 @@ pipeline {
             }
         }
 
-        stage('Magento Install (Safe)') {
+        stage('Magento Install') {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
-                cd /var/www/html
+                cd /var/www/html &&
 
-                if [ -f app/etc/env.php ]; then
-                    echo 'Magento already installed → skipping setup'
-                else
-                    echo 'Running fresh install...'
-
+                if [ ! -f app/etc/env.php ]; then
                     php -d memory_limit=2G bin/magento setup:install \
                     --base-url=http://localhost:8080 \
                     --db-host=db \
@@ -93,7 +101,7 @@ pipeline {
                 docker compose exec -T php bash -c "
                 cd /var/www/html &&
                 php -d memory_limit=2G bin/magento setup:upgrade &&
-                php bin/magento cache:flush
+                php -d memory_limit=2G bin/magento cache:flush
                 "
                 '''
             }
@@ -101,10 +109,7 @@ pipeline {
 
         stage('Verify') {
             steps {
-                sh '''
-                echo "Containers:"
-                docker ps
-                '''
+                sh 'docker ps'
             }
         }
     }
