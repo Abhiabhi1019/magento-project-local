@@ -28,11 +28,9 @@ pipeline {
             steps {
                 sh '''
                 echo "Waiting for MySQL..."
-
                 until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
                     sleep 5
                 done
-
                 echo "DB is ready"
                 '''
             }
@@ -42,12 +40,21 @@ pipeline {
             steps {
                 sh '''
                 echo "Waiting for OpenSearch..."
-
                 until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
                     sleep 5
                 done
-
                 echo "OpenSearch is ready"
+                '''
+            }
+        }
+
+        stage('Check Magento Files') {
+            steps {
+                sh '''
+                docker compose exec -T php bash -c "
+                echo 'Magento files check:'
+                ls -la /var/www/html
+                "
                 '''
             }
         }
@@ -56,8 +63,21 @@ pipeline {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
+                cd /var/www/html || exit 1
+
+                echo 'Running composer install...'
+                composer install -vvv || exit 1
+                "
+                '''
+            }
+        }
+
+        stage('Fix Permissions') {
+            steps {
+                sh '''
+                docker compose exec -T php bash -c "
                 cd /var/www/html &&
-                composer install
+                chmod -R 777 var generated pub/static pub/media || true
                 "
                 '''
             }
@@ -67,7 +87,7 @@ pipeline {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
-                cd /var/www/html &&
+                cd /var/www/html || exit 1
 
                 if [ ! -f app/etc/env.php ]; then
                     echo 'Installing Magento...'
@@ -89,7 +109,8 @@ pipeline {
                     --use-rewrites=1 \
                     --search-engine=opensearch \
                     --opensearch-host=opensearch \
-                    --opensearch-port=9200
+                    --opensearch-port=9200 \
+                    --opensearch-timeout=15 || exit 1
 
                 else
                     echo "Magento already installed"
@@ -104,8 +125,8 @@ pipeline {
                 sh '''
                 docker compose exec -T php bash -c "
                 cd /var/www/html &&
-                php -d memory_limit=2G bin/magento setup:upgrade &&
-                php -d memory_limit=2G bin/magento cache:flush
+                php -d memory_limit=2G bin/magento setup:upgrade || exit 1
+                php -d memory_limit=2G bin/magento cache:flush || exit 1
                 "
                 '''
             }
