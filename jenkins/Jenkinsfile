@@ -23,17 +23,23 @@ pipeline {
             }
         }
 
-        stage('Wait for Services') {
+        stage('Wait for DB') {
             steps {
-                sh 'sleep 60'
+                sh '''
+                echo "Waiting for MySQL..."
+
+                until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
+                    sleep 5
+                done
+
+                echo "DB is ready"
+                '''
             }
         }
 
-        stage('Install Dependencies (Composer)') {
+        stage('Install Dependencies') {
             steps {
                 sh '''
-                echo "Running composer install inside container..."
-
                 docker compose exec -T php bash -c "
                 cd /var/www/html &&
                 composer install
@@ -42,15 +48,13 @@ pipeline {
             }
         }
 
-        stage('Magento Setup') {
+        stage('Magento Install') {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
                 cd /var/www/html &&
 
                 if [ ! -f app/etc/env.php ]; then
-                    echo 'Installing Magento...'
-
                     php bin/magento setup:install \
                     --base-url=http://localhost:8080 \
                     --db-host=db \
@@ -67,7 +71,7 @@ pipeline {
                     --timezone=Asia/Kolkata \
                     --use-rewrites=1
                 else
-                    echo 'Magento already installed'
+                    echo "Already installed"
                 fi
                 "
                 '''
@@ -86,12 +90,15 @@ pipeline {
             }
         }
 
+        stage('Debug Logs') {
+            steps {
+                sh 'docker compose logs --tail=100'
+            }
+        }
+
         stage('Verify') {
             steps {
-                sh '''
-                echo "Running containers:"
-                docker ps
-                '''
+                sh 'docker ps'
             }
         }
     }
