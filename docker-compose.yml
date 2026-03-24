@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
 
   nginx:
@@ -5,19 +7,21 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./magento:/var/www/html          # ✅ FIXED
+      - ./magento:/var/www/html
       - ./docker/nginx:/etc/nginx/conf.d
     depends_on:
       - php
+    restart: always
 
   php:
     build: ./docker/php
     volumes:
-      - ./magento:/var/www/html          # ✅ FIXED
+      - ./magento:/var/www/html
     depends_on:
       - db
       - redis
       - opensearch
+    restart: always
 
   db:
     image: mysql:8
@@ -25,10 +29,13 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: magento
+    ports:
+      - "3307:3306"      # ✅ add for debugging
+    restart: always
 
   redis:
     image: redis:latest
-
+    restart: always
 
   opensearch:
     image: opensearchproject/opensearch:2.11.0
@@ -38,3 +45,4 @@ services:
       - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
       - "9202:9200"
+    restart: always
