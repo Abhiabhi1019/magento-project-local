@@ -15,9 +15,7 @@ pipeline {
                 echo "===== DEBUG START ====="
                 pwd
                 ls -la
-                echo "Check nginx config:"
                 ls docker/nginx/
-                echo "Check docker-compose:"
                 ls docker-compose.yml
                 echo "===== DEBUG END ====="
                 '''
@@ -44,6 +42,69 @@ pipeline {
 
                 echo "Starting containers..."
                 docker compose up -d
+                '''
+            }
+        }
+
+        stage('Wait for Services') {
+            steps {
+                sh '''
+                echo "Waiting for containers to be ready..."
+                sleep 20
+                '''
+            }
+        }
+
+        stage('Magento Install (First Time Only)') {
+            steps {
+                sh '''
+                echo "Installing Magento..."
+
+                docker exec $(docker ps -qf "name=php") bash -c "
+                cd /var/www/html &&
+
+                if [ ! -f app/etc/env.php ]; then
+                    echo 'Running fresh Magento install...'
+
+                    composer install
+
+                    php bin/magento setup:install \
+                    --base-url=http://localhost:8080 \
+                    --db-host=db \
+                    --db-name=magento \
+                    --db-user=root \
+                    --db-password=root \
+                    --admin-firstname=admin \
+                    --admin-lastname=admin \
+                    --admin-email=admin@example.com \
+                    --admin-user=admin \
+                    --admin-password=Admin123@ \
+                    --language=en_US \
+                    --currency=USD \
+                    --timezone=Asia/Kolkata \
+                    --use-rewrites=1
+                else
+                    echo 'Magento already installed, skipping...'
+                fi
+                "
+                '''
+            }
+        }
+
+        stage('Run Deploy Script') {
+            steps {
+                sh '''
+                echo "Running deploy script..."
+
+                docker exec $(docker ps -qf "name=php") bash -c "
+                cd /var/www/html &&
+
+                composer install &&
+                php bin/magento setup:upgrade &&
+                php bin/magento setup:di:compile &&
+                php bin/magento setup:static-content:deploy -f &&
+                php bin/magento cache:flush
+                "
                 '''
             }
         }
