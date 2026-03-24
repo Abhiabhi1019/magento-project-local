@@ -2,7 +2,6 @@ FROM php:8.2-fpm
 
 USER root
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -16,12 +15,8 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libxslt1-dev \
     libonig-dev \
-    libcurl4-openssl-dev \
-    pkg-config \
-    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PHP extensions (Magento required)
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install \
     intl \
@@ -31,9 +26,10 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     xsl \
     bcmath \
     soap \
-    sockets
+    sockets \
+    ftp   # ✅ FIX
 
-# Install Composer (OFFICIAL way ✅)
+# Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
