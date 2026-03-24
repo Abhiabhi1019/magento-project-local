@@ -5,7 +5,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - magento_data:/var/www/html
+      - ./magento_data:/var/www/html
       - ./docker/nginx:/etc/nginx/conf.d   # ✅ FIXED
     depends_on:
       - php
@@ -44,3 +44,4 @@ services:
 
 volumes:
   magento_data:
+    - ./magento:/var/www/html
