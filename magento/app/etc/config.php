@@ -381,8 +381,6 @@ return [
         'Custom_HelloWorld' => 1,
         'Mageplaza_Core' => 1,
         'Mageplaza_BannerSlider' => 0,
-        'Mageplaza_Seo' => 0,
-        'Mageplaza_SocialLogin' => 0,
         'PayPal_Braintree' => 1,
         'PayPal_BraintreeCustomerBalance' => 1,
         'PayPal_BraintreeGiftCard' => 1,
