@@ -19,7 +19,6 @@ pipeline {
                 docker compose down || true
                 docker compose build
                 docker compose up -d
-                docker compose ps
                 '''
             }
         }
@@ -27,26 +26,17 @@ pipeline {
         stage('Wait for Services') {
             steps {
                 sh '''
-                echo "Waiting for services..."
+                echo "Waiting for DB..."
+                until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
+                    sleep 5
+                done
 
-                sleep 60
+                echo "Waiting for OpenSearch..."
+                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
+                    sleep 5
+                done
 
-                echo "Checking DB..."
-                docker compose exec -T db mysqladmin ping -h "localhost" || true
-
-                echo "Checking OpenSearch..."
-                docker compose exec -T php curl -s http://opensearch:9200 || true
-                '''
-            }
-        }
-
-        stage('Check Magento Files') {
-            steps {
-                sh '''
-                docker compose exec -T php bash -c "
-                echo 'Magento files:'
-                ls -la /var/www/html
-                "
+                echo "Services ready"
                 '''
             }
         }
@@ -55,34 +45,23 @@ pipeline {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
-                cd /var/www/html
-
-                echo 'Running composer install...'
-                composer install || true
-                "
-                '''
-            }
-        }
-
-        stage('Fix Permissions') {
-            steps {
-                sh '''
-                docker compose exec -T php bash -c "
                 cd /var/www/html &&
-                chmod -R 777 var generated pub/static pub/media || true
+                composer install
                 "
                 '''
             }
         }
 
-        stage('Magento Install') {
+        stage('Magento Install (Safe)') {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
                 cd /var/www/html
 
-                if [ ! -f app/etc/env.php ]; then
-                    echo 'Installing Magento...'
+                if [ -f app/etc/env.php ]; then
+                    echo 'Magento already installed → skipping setup'
+                else
+                    echo 'Running fresh install...'
 
                     php -d memory_limit=2G bin/magento setup:install \
                     --base-url=http://localhost:8080 \
@@ -101,9 +80,7 @@ pipeline {
                     --use-rewrites=1 \
                     --search-engine=opensearch \
                     --opensearch-host=opensearch \
-                    --opensearch-port=9200 || true
-                else
-                    echo "Magento already installed"
+                    --opensearch-port=9200
                 fi
                 "
                 '''
@@ -115,22 +92,19 @@ pipeline {
                 sh '''
                 docker compose exec -T php bash -c "
                 cd /var/www/html &&
-                php -d memory_limit=2G bin/magento setup:upgrade || true
-                php -d memory_limit=2G bin/magento cache:flush || true
+                php -d memory_limit=2G bin/magento setup:upgrade &&
+                php bin/magento cache:flush
                 "
                 '''
             }
         }
 
-        stage('Logs') {
-            steps {
-                sh 'docker compose logs --tail=100 || true'
-            }
-        }
-
         stage('Verify') {
             steps {
-                sh 'docker ps'
+                sh '''
+                echo "Containers:"
+                docker ps
+                '''
             }
         }
     }
