@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    options {
+        timeout(time: 40, unit: 'MINUTES')   // ✅ prevent timeout kill
+    }
+
     stages {
 
         stage('Checkout Code') {
@@ -15,7 +19,9 @@ pipeline {
                 echo "===== DEBUG START ====="
                 pwd
                 ls -la
+                echo "Check nginx config:"
                 ls docker/nginx/
+                echo "Check docker-compose:"
                 ls docker-compose.yml
                 echo "===== DEBUG END ====="
                 '''
@@ -49,8 +55,8 @@ pipeline {
         stage('Wait for Services') {
             steps {
                 sh '''
-                echo "Waiting for containers to be ready..."
-                sleep 20
+                echo "Waiting for services (DB, OpenSearch)..."
+                sleep 40
                 '''
             }
         }
@@ -60,7 +66,7 @@ pipeline {
                 sh '''
                 echo "Installing Magento..."
 
-                docker exec $(docker ps -qf "name=php") bash -c "
+                docker compose exec -T php bash -c "
                 cd /var/www/html &&
 
                 if [ ! -f app/etc/env.php ]; then
@@ -94,12 +100,11 @@ pipeline {
         stage('Run Deploy Script') {
             steps {
                 sh '''
-                echo "Running deploy script..."
+                echo "Running deploy..."
 
-                docker exec $(docker ps -qf "name=php") bash -c "
+                docker compose exec -T php bash -c "
                 cd /var/www/html &&
 
-                composer install &&
                 php bin/magento setup:upgrade &&
                 php bin/magento setup:di:compile &&
                 php bin/magento setup:static-content:deploy -f &&
