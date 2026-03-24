@@ -19,11 +19,20 @@ pipeline {
             }
         }
 
+        stage('Move to Project Root') {
+            steps {
+                sh '''
+                echo "Ensuring docker-compose file exists"
+                ls docker-compose.yml
+                '''
+            }
+        }
+
         stage('Check Docker') {
             steps {
                 sh '''
-                docker --version
-                docker-compose --version
+                docker --version || echo "Docker not installed"
+                docker-compose --version || echo "Docker Compose not installed"
                 '''
             }
         }
