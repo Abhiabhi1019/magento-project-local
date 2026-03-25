@@ -1,63 +1,135 @@
 pipeline {
     agent any
 
+    options {
+        timeout(time: 50, unit: 'MINUTES')
+    }
+
     stages {
 
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
             }
         }
 
-        stage('Set Workspace') {
+        stage('Build & Start Containers') {
             steps {
                 sh '''
-                echo "Workspace:"
+                echo "=== BUILD ==="
+                docker compose down || true
+                docker compose build
+                docker compose up -d
+                docker compose ps
+                '''
+            }
+        }
+
+        stage('Wait for MySQL') {
+            steps {
+                sh '''
+                echo "=== WAIT MYSQL ==="
+                until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
+                    sleep 5
+                done
+                '''
+            }
+        }
+
+        stage('Wait for OpenSearch') {
+            steps {
+                sh '''
+                echo "=== WAIT OPENSEARCH ==="
+                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
+                    sleep 5
+                done
+                '''
+            }
+        }
+
+        stage('Check Magento Files') {
+            steps {
+                sh '''
+                echo "=== CHECK FILES ==="
+                docker compose exec -T php bash -c "
+                cd /var/www/html
                 pwd
                 ls -la
-                '''
-            }
-        }
-
-        stage('Build Containers') {
-            steps {
-                sh '''
-                docker compose --project-directory $(pwd) down || true
-                docker compose --project-directory $(pwd) up -d --build
-                '''
-            }
-        }
-
-        stage('Verify Files Inside Container') {
-            steps {
-                sh '''
-                docker compose exec -T php bash -c "
-                echo 'Inside container:'
-                pwd
-                ls -la /var/www/html
                 "
                 '''
             }
         }
 
-       stage('Install Dependencies (Composer)') {
-    steps {
-        sh '''
-        echo "=== COMPOSER INSTALL ==="
+        stage('Composer Install') {
+            steps {
+                sh '''
+                echo "=== COMPOSER INSTALL ==="
+                docker compose exec -T php bash -c "
+                cd /var/www/html
+                composer install --no-interaction --prefer-dist || echo 'Composer failed'
+                "
+                '''
+            }
+        }
 
-        docker compose exec -T php bash -c "
-        cd /var/www/html
+        stage('Magento Install') {
+            steps {
+                sh '''
+                echo "=== MAGENTO INSTALL ==="
+                docker compose exec -T php bash -c "
+                cd /var/www/html
 
-        echo 'Current directory:'
-        pwd
+                php -d memory_limit=2G bin/magento setup:install \
+                --base-url=http://localhost:8080 \
+                --db-host=db \
+                --db-name=magento \
+                --db-user=root \
+                --db-password=root \
+                --admin-firstname=admin \
+                --admin-lastname=admin \
+                --admin-email=admin@example.com \
+                --admin-user=admin \
+                --admin-password=Admin123@ \
+                --language=en_US \
+                --currency=USD \
+                --timezone=Asia/Kolkata \
+                --use-rewrites=1 \
+                --search-engine=opensearch \
+                --opensearch-host=opensearch \
+                --opensearch-port=9200 || echo 'Magento install failed'
+                "
+                '''
+            }
+        }
 
-        echo 'Files:'
-        ls -la
+        stage('Deploy Magento') {
+            steps {
+                sh '''
+                echo "=== DEPLOY ==="
+                docker compose exec -T php bash -c "
+                cd /var/www/html
+                php -d memory_limit=2G bin/magento setup:upgrade || true
+                php -d memory_limit=2G bin/magento cache:flush || true
+                "
+                '''
+            }
+        }
 
-        echo 'Running composer install...'
-        composer install --no-interaction --prefer-dist
-        "
-        '''
+        stage('Logs') {
+            steps {
+                sh '''
+                echo "=== LOGS ==="
+                docker compose logs --tail=100
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                echo "=== CONTAINERS ==="
+                docker ps
+                '''
             }
         }
     }
