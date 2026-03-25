@@ -23,7 +23,6 @@ pipeline {
             }
         }
 
-<<<<<<< HEAD
         stage('Wait for MySQL') {
             steps {
                 sh '''
@@ -33,51 +32,24 @@ pipeline {
                 done
                 echo "MySQL is ready"
                 '''
-=======
-        stage('Wait for Services') {
-            steps {
-                sh 'sleep 60'
->>>>>>> 25f6dc5 (update the code)
             }
         }
 
         stage('Verify Magento Path') {
             steps {
                 sh '''
-<<<<<<< HEAD
                 echo "Checking Magento files..."
                 docker compose exec -T php ls -la /var/www/html
-=======
-                echo "Checking Magento path..."
-                docker compose exec -T php bash -c "
-                ls -la /var/www/html
-                "
->>>>>>> 25f6dc5 (update the code)
                 '''
             }
         }
 
-<<<<<<< HEAD
-        stage('Fix Permissions') {
-=======
         stage('Install Dependencies') {
->>>>>>> 25f6dc5 (update the code)
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
                 cd /var/www/html &&
                 test -f composer.json || (echo 'composer.json not found!' && exit 1)
-                composer install
-                "
-                '''
-            }
-        }
-
-        stage('Install Dependencies (Composer)') {
-            steps {
-                sh '''
-                docker compose exec -T php bash -c "
-                cd /var/www/html &&
                 composer install --no-interaction --prefer-dist
                 "
                 '''
@@ -88,12 +60,7 @@ pipeline {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
-<<<<<<< HEAD
                 cd /var/www/html &&
-=======
-                cd /var/www/html
->>>>>>> 25f6dc5 (update the code)
-
                 if [ ! -f app/etc/env.php ]; then
                     php -d memory_limit=2G bin/magento setup:install \
                     --base-url=http://localhost:8080 \
@@ -113,10 +80,6 @@ pipeline {
                     --search-engine=opensearch \
                     --opensearch-host=opensearch \
                     --opensearch-port=9200
-<<<<<<< HEAD
-
-=======
->>>>>>> 25f6dc5 (update the code)
                 else
                     echo "Already installed"
                 fi
@@ -137,7 +100,6 @@ pipeline {
             }
         }
 
-<<<<<<< HEAD
         stage('Logs (Debug)') {
             steps {
                 sh '''
@@ -147,8 +109,6 @@ pipeline {
             }
         }
 
-=======
->>>>>>> 25f6dc5 (update the code)
         stage('Verify') {
             steps {
                 sh 'docker ps'
