@@ -40,20 +40,24 @@ pipeline {
             }
         }
 
-        stage('Composer Install') {
-            steps {
-                sh '''
-                docker compose exec -T php bash -c "
-                cd /var/www/html
+       stage('Install Dependencies (Composer)') {
+    steps {
+        sh '''
+        echo "=== COMPOSER INSTALL ==="
 
-                if [ ! -f composer.json ]; then
-                    echo 'ERROR: composer.json missing!'
-                    exit 1
-                fi
+        docker compose exec -T php bash -c "
+        cd /var/www/html
 
-                composer install
-                "
-                '''
+        echo 'Current directory:'
+        pwd
+
+        echo 'Files:'
+        ls -la
+
+        echo 'Running composer install...'
+        composer install --no-interaction --prefer-dist
+        "
+        '''
             }
         }
     }
