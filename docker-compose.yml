@@ -5,8 +5,8 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./magento:/var/www/html
-      - ./docker/nginx:/etc/nginx/conf.d
+      - ${PWD}/magento:/var/www/html
+      - ${PWD}/docker/nginx:/etc/nginx/conf.d
     depends_on:
       - php
     restart: always
@@ -14,7 +14,7 @@ services:
   php:
     build: ./docker/php
     volumes:
-      - ./magento:/var/www/html
+      - ${PWD}/magento:/var/www/html
     depends_on:
       - db
       - redis
@@ -28,7 +28,7 @@ services:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: magento
     ports:
-      - "3307:3306"      # ✅ add for debugging
+      - "3307:3306"
     restart: always
 
   redis:
