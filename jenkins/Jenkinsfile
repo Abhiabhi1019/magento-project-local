@@ -19,11 +19,11 @@ pipeline {
                 docker compose down || true
                 docker compose build
                 docker compose up -d
-                docker compose ps
                 '''
             }
         }
 
+<<<<<<< HEAD
         stage('Wait for MySQL') {
             steps {
                 sh '''
@@ -33,36 +33,41 @@ pipeline {
                 done
                 echo "MySQL is ready"
                 '''
+=======
+        stage('Wait for Services') {
+            steps {
+                sh 'sleep 60'
+>>>>>>> 25f6dc5 (update the code)
             }
         }
 
-        stage('Wait for OpenSearch') {
+        stage('Verify Magento Path') {
             steps {
                 sh '''
-                echo "Waiting for OpenSearch..."
-                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
-                    sleep 5
-                done
-                echo "OpenSearch is ready"
-                '''
-            }
-        }
-
-        stage('Check Magento Files') {
-            steps {
-                sh '''
+<<<<<<< HEAD
                 echo "Checking Magento files..."
                 docker compose exec -T php ls -la /var/www/html
+=======
+                echo "Checking Magento path..."
+                docker compose exec -T php bash -c "
+                ls -la /var/www/html
+                "
+>>>>>>> 25f6dc5 (update the code)
                 '''
             }
         }
 
+<<<<<<< HEAD
         stage('Fix Permissions') {
+=======
+        stage('Install Dependencies') {
+>>>>>>> 25f6dc5 (update the code)
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
                 cd /var/www/html &&
-                chmod -R 777 var generated pub/static pub/media || true
+                test -f composer.json || (echo 'composer.json not found!' && exit 1)
+                composer install
                 "
                 '''
             }
@@ -83,11 +88,13 @@ pipeline {
             steps {
                 sh '''
                 docker compose exec -T php bash -c "
+<<<<<<< HEAD
                 cd /var/www/html &&
+=======
+                cd /var/www/html
+>>>>>>> 25f6dc5 (update the code)
 
                 if [ ! -f app/etc/env.php ]; then
-                    echo 'Installing Magento...'
-
                     php -d memory_limit=2G bin/magento setup:install \
                     --base-url=http://localhost:8080 \
                     --db-host=db \
@@ -106,9 +113,12 @@ pipeline {
                     --search-engine=opensearch \
                     --opensearch-host=opensearch \
                     --opensearch-port=9200
+<<<<<<< HEAD
 
+=======
+>>>>>>> 25f6dc5 (update the code)
                 else
-                    echo "Magento already installed"
+                    echo "Already installed"
                 fi
                 "
                 '''
@@ -127,6 +137,7 @@ pipeline {
             }
         }
 
+<<<<<<< HEAD
         stage('Logs (Debug)') {
             steps {
                 sh '''
@@ -136,12 +147,11 @@ pipeline {
             }
         }
 
+=======
+>>>>>>> 25f6dc5 (update the code)
         stage('Verify') {
             steps {
-                sh '''
-                echo "===== RUNNING CONTAINERS ====="
-                docker ps
-                '''
+                sh 'docker ps'
             }
         }
     }
