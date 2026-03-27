@@ -5,8 +5,8 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ${PWD}/magento:/var/www/html
-      - ${PWD}/docker/nginx:/etc/nginx/conf.d
+      - ./magento:/var/www/html
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf   # ✅ FIXED
     depends_on:
       - php
     restart: always
@@ -14,7 +14,7 @@ services:
   php:
     build: ./docker/php
     volumes:
-      - ${PWD}/magento:/var/www/html
+      - ./magento:/var/www/html
     depends_on:
       - db
       - redis
@@ -23,7 +23,6 @@ services:
 
   db:
     image: mysql:8
-    command: --innodb-buffer-pool-size=512M
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: magento
