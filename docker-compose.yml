@@ -6,7 +6,7 @@ services:
       - "8080:80"
     volumes:
       - ${PWD}/magento:/var/www/html
-      - ${PWD}/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf   # ✅ FIXED
+      - ${PWD}/docker/nginx:/etc/nginx/conf.d   # ✅ FIXED (DIR MOUNT)
     depends_on:
       - php
     restart: always

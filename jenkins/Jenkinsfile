@@ -5,6 +5,10 @@ pipeline {
         timeout(time: 50, unit: 'MINUTES')
     }
 
+    environment {
+        COMPOSE_PROJECT_NAME = "magento-project-local"
+    }
+
     stages {
 
         stage('Checkout Code') {
@@ -13,30 +17,31 @@ pipeline {
             }
         }
 
-        stage('Set Workspace Path') {
+        stage('Debug Workspace (VERY IMPORTANT)') {
             steps {
                 sh '''
                 echo "=== WORKSPACE ==="
                 pwd
                 ls -la
 
-                # ✅ VERY IMPORTANT
-                export PWD=$(pwd)
-                echo "PWD=$PWD"
+                echo "=== CHECK NGINX CONFIG ==="
+                ls docker/nginx
+
+                echo "=== TREE ==="
+                ls -R docker
                 '''
             }
         }
 
-        stage('Start Containers') {
+        stage('Build & Start Containers') {
             steps {
                 sh '''
-                echo "=== START CONTAINERS ==="
+                echo "=== BUILD & START ==="
 
                 export PWD=$(pwd)
 
                 docker compose down || true
 
-                # Try build (fallback if buildx not available)
                 docker compose up -d --build || docker compose up -d
 
                 docker compose ps
@@ -48,9 +53,13 @@ pipeline {
             steps {
                 sh '''
                 echo "=== WAIT MYSQL ==="
+
                 until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
+                    echo "Waiting for MySQL..."
                     sleep 5
                 done
+
+                echo "MySQL is ready ✅"
                 '''
             }
         }
@@ -59,9 +68,13 @@ pipeline {
             steps {
                 sh '''
                 echo "=== WAIT OPENSEARCH ==="
+
                 until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
+                    echo "Waiting for OpenSearch..."
                     sleep 5
                 done
+
+                echo "OpenSearch is ready ✅"
                 '''
             }
         }
@@ -69,7 +82,8 @@ pipeline {
         stage('Check Magento Files') {
             steps {
                 sh '''
-                echo "=== CHECK FILES ==="
+                echo "=== CHECK MAGENTO FILES ==="
+
                 docker compose exec -T php bash -c "
                 cd /var/www/html
                 pwd
@@ -83,6 +97,7 @@ pipeline {
             steps {
                 sh '''
                 echo "=== FIX PERMISSIONS ==="
+
                 docker compose exec -T php bash -c "
                 cd /var/www/html
                 chmod -R 777 var generated pub/static pub/media || true
@@ -95,13 +110,14 @@ pipeline {
             steps {
                 sh '''
                 echo "=== COMPOSER INSTALL ==="
+
                 docker compose exec -T php bash -c "
                 cd /var/www/html
 
                 if [ ! -d vendor ]; then
                     composer install --no-interaction --prefer-dist
                 else
-                    echo 'Vendor already exists, skipping composer install'
+                    echo 'Vendor exists, skipping composer install'
                 fi
                 "
                 '''
@@ -112,6 +128,7 @@ pipeline {
             steps {
                 sh '''
                 echo "=== MAGENTO INSTALL ==="
+
                 docker compose exec -T php bash -c "
                 cd /var/www/html
 
@@ -150,6 +167,7 @@ pipeline {
             steps {
                 sh '''
                 echo "=== DEPLOY ==="
+
                 docker compose exec -T php bash -c "
                 cd /var/www/html
 
@@ -172,7 +190,7 @@ pipeline {
         stage('Verify') {
             steps {
                 sh '''
-                echo "=== CONTAINERS ==="
+                echo "=== FINAL STATUS ==="
                 docker ps
                 '''
             }
