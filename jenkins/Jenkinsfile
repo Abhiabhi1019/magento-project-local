@@ -13,13 +13,30 @@ pipeline {
             }
         }
 
+        stage('Set Workspace Path') {
+            steps {
+                sh '''
+                echo "=== WORKSPACE ==="
+                pwd
+                ls -la
+
+                # ✅ VERY IMPORTANT
+                export PWD=$(pwd)
+                echo "PWD=$PWD"
+                '''
+            }
+        }
+
         stage('Start Containers') {
             steps {
                 sh '''
                 echo "=== START CONTAINERS ==="
+
+                export PWD=$(pwd)
+
                 docker compose down || true
 
-                # Try build (if buildx exists), else fallback
+                # Try build (fallback if buildx not available)
                 docker compose up -d --build || docker compose up -d
 
                 docker compose ps
@@ -62,6 +79,18 @@ pipeline {
             }
         }
 
+        stage('Fix Permissions') {
+            steps {
+                sh '''
+                echo "=== FIX PERMISSIONS ==="
+                docker compose exec -T php bash -c "
+                cd /var/www/html
+                chmod -R 777 var generated pub/static pub/media || true
+                "
+                '''
+            }
+        }
+
         stage('Composer Install') {
             steps {
                 sh '''
@@ -69,7 +98,6 @@ pipeline {
                 docker compose exec -T php bash -c "
                 cd /var/www/html
 
-                # Install only if vendor missing
                 if [ ! -d vendor ]; then
                     composer install --no-interaction --prefer-dist
                 else
