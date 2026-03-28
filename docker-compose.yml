@@ -5,8 +5,8 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ${PWD}/magento:/var/www/html
-      - ${PWD}/docker/nginx:/etc/nginx/conf.d   # ✅ FIXED (DIR MOUNT)
+      - ./magento:/var/www/html
+      - ./docker/nginx:/etc/nginx/conf.d
     depends_on:
       - php
     restart: always
@@ -14,7 +14,7 @@ services:
   php:
     build: ./docker/php
     volumes:
-      - ${PWD}/magento:/var/www/html
+      - ./magento:/var/www/html
     depends_on:
       - db
       - redis

@@ -17,7 +17,7 @@ pipeline {
             }
         }
 
-        stage('Debug Workspace (VERY IMPORTANT)') {
+        stage('Debug Workspace') {
             steps {
                 sh '''
                 echo "=== WORKSPACE ==="
@@ -25,10 +25,10 @@ pipeline {
                 ls -la
 
                 echo "=== CHECK NGINX CONFIG ==="
-                ls docker/nginx
+                ls -la docker/nginx
 
-                echo "=== TREE ==="
-                ls -R docker
+                echo "=== CHECK COMPOSE FILE ==="
+                ls -la docker-compose.yml
                 '''
             }
         }
@@ -36,15 +36,21 @@ pipeline {
         stage('Build & Start Containers') {
             steps {
                 sh '''
-                echo "=== BUILD & START ==="
+                echo "=== BUILD ==="
+                pwd
 
-                export PWD=$(pwd)
+                docker compose -f docker-compose.yml down || true
+                docker compose -f docker-compose.yml up -d --build || docker compose -f docker-compose.yml up -d
+                docker compose -f docker-compose.yml ps
+                '''
+            }
+        }
 
-                docker compose down || true
-
-                docker compose up -d --build || docker compose up -d
-
-                docker compose ps
+        stage('Verify Mount (VERY IMPORTANT)') {
+            steps {
+                sh '''
+                echo "=== VERIFY MOUNT ==="
+                docker compose -f docker-compose.yml exec -T php ls -la /var/www/html
                 '''
             }
         }
@@ -54,7 +60,7 @@ pipeline {
                 sh '''
                 echo "=== WAIT MYSQL ==="
 
-                until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
+                until docker compose -f docker-compose.yml exec -T db mysqladmin ping -h "localhost" --silent; do
                     echo "Waiting for MySQL..."
                     sleep 5
                 done
@@ -69,7 +75,7 @@ pipeline {
                 sh '''
                 echo "=== WAIT OPENSEARCH ==="
 
-                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
+                until docker compose -f docker-compose.yml exec -T php curl -s http://opensearch:9200 > /dev/null; do
                     echo "Waiting for OpenSearch..."
                     sleep 5
                 done
@@ -79,27 +85,14 @@ pipeline {
             }
         }
 
-        stage('Check Magento Files') {
-            steps {
-                sh '''
-                echo "=== CHECK MAGENTO FILES ==="
-
-                docker compose exec -T php bash -c "
-                cd /var/www/html
-                pwd
-                ls -la
-                "
-                '''
-            }
-        }
-
         stage('Fix Permissions') {
             steps {
                 sh '''
                 echo "=== FIX PERMISSIONS ==="
 
-                docker compose exec -T php bash -c "
+                docker compose -f docker-compose.yml exec -T php bash -c "
                 cd /var/www/html
+                mkdir -p var generated pub/static pub/media
                 chmod -R 777 var generated pub/static pub/media || true
                 "
                 '''
@@ -111,13 +104,18 @@ pipeline {
                 sh '''
                 echo "=== COMPOSER INSTALL ==="
 
-                docker compose exec -T php bash -c "
+                docker compose -f docker-compose.yml exec -T php bash -c "
                 cd /var/www/html
+
+                if [ ! -f composer.json ]; then
+                    echo 'ERROR: composer.json missing!'
+                    exit 1
+                fi
 
                 if [ ! -d vendor ]; then
                     composer install --no-interaction --prefer-dist
                 else
-                    echo 'Vendor exists, skipping composer install'
+                    echo 'Vendor exists, skipping'
                 fi
                 "
                 '''
@@ -129,12 +127,10 @@ pipeline {
                 sh '''
                 echo "=== MAGENTO INSTALL ==="
 
-                docker compose exec -T php bash -c "
+                docker compose -f docker-compose.yml exec -T php bash -c "
                 cd /var/www/html
 
                 if [ ! -f app/etc/env.php ]; then
-                    echo 'Installing Magento...'
-
                     php -d memory_limit=2G bin/magento setup:install \
                     --base-url=http://localhost:8080 \
                     --db-host=db \
@@ -154,9 +150,8 @@ pipeline {
                     --opensearch-host=opensearch \
                     --opensearch-port=9200 \
                     --cleanup-database
-
                 else
-                    echo 'Magento already installed'
+                    echo "Magento already installed"
                 fi
                 "
                 '''
@@ -168,9 +163,8 @@ pipeline {
                 sh '''
                 echo "=== DEPLOY ==="
 
-                docker compose exec -T php bash -c "
+                docker compose -f docker-compose.yml exec -T php bash -c "
                 cd /var/www/html
-
                 php -d memory_limit=2G bin/magento setup:upgrade || true
                 php -d memory_limit=2G bin/magento cache:flush || true
                 "
@@ -182,7 +176,7 @@ pipeline {
             steps {
                 sh '''
                 echo "=== LOGS ==="
-                docker compose logs --tail=100
+                docker compose -f docker-compose.yml logs --tail=100
                 '''
             }
         }
