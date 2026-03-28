@@ -5,10 +5,6 @@ pipeline {
         timeout(time: 50, unit: 'MINUTES')
     }
 
-    environment {
-        COMPOSE_PROJECT_NAME = "magento-project-local"
-    }
-
     stages {
 
         stage('Checkout Code') {
@@ -24,33 +20,38 @@ pipeline {
                 pwd
                 ls -la
 
-                echo "=== CHECK NGINX CONFIG ==="
-                ls -la docker/nginx
-
-                echo "=== CHECK COMPOSE FILE ==="
-                ls -la docker-compose.yml
+                echo "=== CHECK MAGENTO FOLDER ==="
+                ls -la magento || echo "❌ Magento folder missing"
                 '''
             }
         }
 
-        stage('Build & Start Containers') {
+        stage('Start Containers') {
             steps {
                 sh '''
-                echo "=== BUILD ==="
-                pwd
-
-                docker compose -f docker-compose.yml down || true
-                docker compose -f docker-compose.yml up -d --build || docker compose -f docker-compose.yml up -d
-                docker compose -f docker-compose.yml ps
+                echo "=== START CONTAINERS ==="
+                docker compose down || true
+                docker compose up -d --build || docker compose up -d
+                docker compose ps
                 '''
             }
         }
 
-        stage('Verify Mount (VERY IMPORTANT)') {
+        stage('Copy Magento Code') {
             steps {
                 sh '''
-                echo "=== VERIFY MOUNT ==="
-                docker compose -f docker-compose.yml exec -T php ls -la /var/www/html
+                echo "=== COPY MAGENTO CODE ==="
+
+                CONTAINER=$(docker compose ps -q php)
+
+                # Clean old files
+                docker exec $CONTAINER rm -rf /var/www/html/*
+
+                # Copy project
+                docker cp ./magento/. $CONTAINER:/var/www/html/
+
+                # Verify
+                docker compose exec -T php ls -la /var/www/html
                 '''
             }
         }
@@ -59,13 +60,11 @@ pipeline {
             steps {
                 sh '''
                 echo "=== WAIT MYSQL ==="
-
-                until docker compose -f docker-compose.yml exec -T db mysqladmin ping -h "localhost" --silent; do
+                until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
                     echo "Waiting for MySQL..."
                     sleep 5
                 done
-
-                echo "MySQL is ready ✅"
+                echo "MySQL ready ✅"
                 '''
             }
         }
@@ -74,13 +73,11 @@ pipeline {
             steps {
                 sh '''
                 echo "=== WAIT OPENSEARCH ==="
-
-                until docker compose -f docker-compose.yml exec -T php curl -s http://opensearch:9200 > /dev/null; do
+                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
                     echo "Waiting for OpenSearch..."
                     sleep 5
                 done
-
-                echo "OpenSearch is ready ✅"
+                echo "OpenSearch ready ✅"
                 '''
             }
         }
@@ -90,7 +87,7 @@ pipeline {
                 sh '''
                 echo "=== FIX PERMISSIONS ==="
 
-                docker compose -f docker-compose.yml exec -T php bash -c "
+                docker compose exec -T php bash -c "
                 cd /var/www/html
                 mkdir -p var generated pub/static pub/media
                 chmod -R 777 var generated pub/static pub/media || true
@@ -104,19 +101,9 @@ pipeline {
                 sh '''
                 echo "=== COMPOSER INSTALL ==="
 
-                docker compose -f docker-compose.yml exec -T php bash -c "
+                docker compose exec -T php bash -c "
                 cd /var/www/html
-
-                if [ ! -f composer.json ]; then
-                    echo 'ERROR: composer.json missing!'
-                    exit 1
-                fi
-
-                if [ ! -d vendor ]; then
-                    composer install --no-interaction --prefer-dist
-                else
-                    echo 'Vendor exists, skipping'
-                fi
+                composer install --no-interaction --prefer-dist
                 "
                 '''
             }
@@ -127,10 +114,12 @@ pipeline {
                 sh '''
                 echo "=== MAGENTO INSTALL ==="
 
-                docker compose -f docker-compose.yml exec -T php bash -c "
+                docker compose exec -T php bash -c "
                 cd /var/www/html
 
                 if [ ! -f app/etc/env.php ]; then
+                    echo 'Installing Magento...'
+
                     php -d memory_limit=2G bin/magento setup:install \
                     --base-url=http://localhost:8080 \
                     --db-host=db \
@@ -148,8 +137,7 @@ pipeline {
                     --use-rewrites=1 \
                     --search-engine=opensearch \
                     --opensearch-host=opensearch \
-                    --opensearch-port=9200 \
-                    --cleanup-database
+                    --opensearch-port=9200
                 else
                     echo "Magento already installed"
                 fi
@@ -163,10 +151,10 @@ pipeline {
                 sh '''
                 echo "=== DEPLOY ==="
 
-                docker compose -f docker-compose.yml exec -T php bash -c "
+                docker compose exec -T php bash -c "
                 cd /var/www/html
-                php -d memory_limit=2G bin/magento setup:upgrade || true
-                php -d memory_limit=2G bin/magento cache:flush || true
+                php bin/magento setup:upgrade || true
+                php bin/magento cache:flush || true
                 "
                 '''
             }
@@ -176,7 +164,7 @@ pipeline {
             steps {
                 sh '''
                 echo "=== LOGS ==="
-                docker compose -f docker-compose.yml logs --tail=100
+                docker compose logs --tail=100
                 '''
             }
         }

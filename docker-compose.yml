@@ -5,16 +5,13 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./magento:/var/www/html
-      - ./docker/nginx:/etc/nginx/conf.d
+      - ./docker/nginx:/etc/nginx/conf.d   # only config
     depends_on:
       - php
     restart: always
 
   php:
     build: ./docker/php
-    volumes:
-      - ./magento:/var/www/html
     depends_on:
       - db
       - redis
