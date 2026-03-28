@@ -13,13 +13,15 @@ pipeline {
             }
         }
 
-        stage('Build & Start Containers') {
+        stage('Start Containers') {
             steps {
                 sh '''
-                echo "=== BUILD ==="
+                echo "=== START CONTAINERS ==="
                 docker compose down || true
-                docker compose build
-                docker compose up -d
+
+                # Try build (if buildx exists), else fallback
+                docker compose up -d --build || docker compose up -d
+
                 docker compose ps
                 '''
             }
@@ -66,37 +68,51 @@ pipeline {
                 echo "=== COMPOSER INSTALL ==="
                 docker compose exec -T php bash -c "
                 cd /var/www/html
-                composer install --no-interaction --prefer-dist || echo 'Composer failed'
+
+                # Install only if vendor missing
+                if [ ! -d vendor ]; then
+                    composer install --no-interaction --prefer-dist
+                else
+                    echo 'Vendor already exists, skipping composer install'
+                fi
                 "
                 '''
             }
         }
 
-        stage('Magento Install') {
+        stage('Magento Install (First Time Only)') {
             steps {
                 sh '''
                 echo "=== MAGENTO INSTALL ==="
                 docker compose exec -T php bash -c "
                 cd /var/www/html
 
-                php -d memory_limit=2G bin/magento setup:install \
-                --base-url=http://localhost:8080 \
-                --db-host=db \
-                --db-name=magento \
-                --db-user=root \
-                --db-password=root \
-                --admin-firstname=admin \
-                --admin-lastname=admin \
-                --admin-email=admin@example.com \
-                --admin-user=admin \
-                --admin-password=Admin123@ \
-                --language=en_US \
-                --currency=USD \
-                --timezone=Asia/Kolkata \
-                --use-rewrites=1 \
-                --search-engine=opensearch \
-                --opensearch-host=opensearch \
-                --opensearch-port=9200 || echo 'Magento install failed'
+                if [ ! -f app/etc/env.php ]; then
+                    echo 'Installing Magento...'
+
+                    php -d memory_limit=2G bin/magento setup:install \
+                    --base-url=http://localhost:8080 \
+                    --db-host=db \
+                    --db-name=magento \
+                    --db-user=root \
+                    --db-password=root \
+                    --admin-firstname=admin \
+                    --admin-lastname=admin \
+                    --admin-email=admin@example.com \
+                    --admin-user=admin \
+                    --admin-password=Admin123@ \
+                    --language=en_US \
+                    --currency=USD \
+                    --timezone=Asia/Kolkata \
+                    --use-rewrites=1 \
+                    --search-engine=opensearch \
+                    --opensearch-host=opensearch \
+                    --opensearch-port=9200 \
+                    --cleanup-database
+
+                else
+                    echo 'Magento already installed'
+                fi
                 "
                 '''
             }
@@ -108,6 +124,7 @@ pipeline {
                 echo "=== DEPLOY ==="
                 docker compose exec -T php bash -c "
                 cd /var/www/html
+
                 php -d memory_limit=2G bin/magento setup:upgrade || true
                 php -d memory_limit=2G bin/magento cache:flush || true
                 "
