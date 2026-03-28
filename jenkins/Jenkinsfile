@@ -13,23 +13,9 @@ pipeline {
             }
         }
 
-        stage('Debug Workspace') {
-            steps {
-                sh '''
-                echo "=== WORKSPACE ==="
-                pwd
-                ls -la
-
-                echo "=== CHECK MAGENTO FOLDER ==="
-                ls -la magento || echo "❌ Magento folder missing"
-                '''
-            }
-        }
-
         stage('Start Containers') {
             steps {
                 sh '''
-                echo "=== START CONTAINERS ==="
                 docker compose down || true
                 docker compose up -d --build || docker compose up -d
                 docker compose ps
@@ -40,58 +26,52 @@ pipeline {
         stage('Copy Magento Code') {
             steps {
                 sh '''
-                echo "=== COPY MAGENTO CODE ==="
-
                 CONTAINER=$(docker compose ps -q php)
 
-                # Clean old files
                 docker exec $CONTAINER rm -rf /var/www/html/*
-
-                # Copy project
                 docker cp ./magento/. $CONTAINER:/var/www/html/
 
-                # Verify
                 docker compose exec -T php ls -la /var/www/html
                 '''
+            }
+        }
+
+        stage('Setup Auth.json') {
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'magento-repo', usernameVariable: 'MAGENTO_USER', passwordVariable: 'MAGENTO_PASS'),
+                    usernamePassword(credentialsId: 'mageplaza-repo', usernameVariable: 'MP_USER', passwordVariable: 'MP_PASS')
+                ]) {
+                    sh '''
+                    echo "=== SET AUTH ==="
+
+                    docker compose exec -T php bash -c "
+                    cat > /var/www/html/auth.json <<EOF
+{
+  \\"http-basic\\": {
+    \\"repo.magento.com\\": {
+      \\"username\\": \\"$MAGENTO_USER\\",
+      \\"password\\": \\"$MAGENTO_PASS\\"
+    },
+    \\"repo.mageplaza.com\\": {
+      \\"username\\": \\"$MP_USER\\",
+      \\"password\\": \\"$MP_PASS\\"
+    }
+  }
+}
+EOF
+                    "
+                    '''
+                }
             }
         }
 
         stage('Wait for MySQL') {
             steps {
                 sh '''
-                echo "=== WAIT MYSQL ==="
                 until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
-                    echo "Waiting for MySQL..."
                     sleep 5
                 done
-                echo "MySQL ready ✅"
-                '''
-            }
-        }
-
-        stage('Wait for OpenSearch') {
-            steps {
-                sh '''
-                echo "=== WAIT OPENSEARCH ==="
-                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
-                    echo "Waiting for OpenSearch..."
-                    sleep 5
-                done
-                echo "OpenSearch ready ✅"
-                '''
-            }
-        }
-
-        stage('Fix Permissions') {
-            steps {
-                sh '''
-                echo "=== FIX PERMISSIONS ==="
-
-                docker compose exec -T php bash -c "
-                cd /var/www/html
-                mkdir -p var generated pub/static pub/media
-                chmod -R 777 var generated pub/static pub/media || true
-                "
                 '''
             }
         }
@@ -99,58 +79,45 @@ pipeline {
         stage('Composer Install') {
             steps {
                 sh '''
-                echo "=== COMPOSER INSTALL ==="
-
                 docker compose exec -T php bash -c "
                 cd /var/www/html
-                composer install --no-interaction --prefer-dist
+                composer install --no-interaction --prefer-dist --no-progress
                 "
                 '''
             }
         }
 
-        stage('Magento Install (First Time Only)') {
+        stage('Magento Install') {
             steps {
                 sh '''
-                echo "=== MAGENTO INSTALL ==="
-
                 docker compose exec -T php bash -c "
                 cd /var/www/html
 
                 if [ ! -f app/etc/env.php ]; then
-                    echo 'Installing Magento...'
-
                     php -d memory_limit=2G bin/magento setup:install \
                     --base-url=http://localhost:8080 \
                     --db-host=db \
                     --db-name=magento \
                     --db-user=root \
                     --db-password=root \
-                    --admin-firstname=admin \
-                    --admin-lastname=admin \
-                    --admin-email=admin@example.com \
                     --admin-user=admin \
                     --admin-password=Admin123@ \
+                    --admin-email=admin@example.com \
                     --language=en_US \
                     --currency=USD \
                     --timezone=Asia/Kolkata \
-                    --use-rewrites=1 \
                     --search-engine=opensearch \
                     --opensearch-host=opensearch \
                     --opensearch-port=9200
-                else
-                    echo "Magento already installed"
                 fi
                 "
                 '''
             }
         }
 
-        stage('Deploy Magento') {
+        stage('Deploy') {
             steps {
                 sh '''
-                echo "=== DEPLOY ==="
-
                 docker compose exec -T php bash -c "
                 cd /var/www/html
                 php bin/magento setup:upgrade || true
@@ -160,21 +127,9 @@ pipeline {
             }
         }
 
-        stage('Logs') {
-            steps {
-                sh '''
-                echo "=== LOGS ==="
-                docker compose logs --tail=100
-                '''
-            }
-        }
-
         stage('Verify') {
             steps {
-                sh '''
-                echo "=== FINAL STATUS ==="
-                docker ps
-                '''
+                sh 'docker ps'
             }
         }
     }
