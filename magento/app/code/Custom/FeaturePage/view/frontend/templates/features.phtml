@@ -1,0 +1,167 @@
+<?php
+/**
+ * Custom FeaturePage - Features template
+ * @var \Magento\Framework\View\Element\Template $block
+ */
+?>
+<style>
+  .feature-hero {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    padding: 80px 20px;
+    text-align: center;
+    border-radius: 0 0 40px 40px;
+    margin-bottom: 60px;
+  }
+  .feature-hero h1 {
+    font-size: 3rem;
+    font-weight: 800;
+    margin-bottom: 16px;
+    background: linear-gradient(90deg, #e94560, #0f3460, #533483);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .feature-hero p {
+    font-size: 1.2rem;
+    opacity: 0.85;
+    max-width: 600px;
+    margin: 0 auto;
+  }
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 28px;
+    max-width: 1200px;
+    margin: 0 auto 60px;
+    padding: 0 20px;
+  }
+  .feature-card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 36px 28px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    border: 1px solid #f0f0f0;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    text-align: center;
+  }
+  .feature-card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.14);
+  }
+  .feature-icon {
+    font-size: 3rem;
+    margin-bottom: 18px;
+    display: block;
+  }
+  .feature-card h3 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 12px;
+  }
+  .feature-card p {
+    color: #666;
+    line-height: 1.7;
+    font-size: 0.95rem;
+  }
+  .badge {
+    display: inline-block;
+    background: #e94560;
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .tech-stack {
+    background: #f8f9ff;
+    padding: 60px 20px;
+    text-align: center;
+  }
+  .tech-stack h2 {
+    font-size: 2rem;
+    font-weight: 800;
+    color: #1a1a2e;
+    margin-bottom: 36px;
+  }
+  .tech-pills {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 14px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  .tech-pill {
+    background: linear-gradient(135deg, #0f3460, #533483);
+    color: #fff;
+    padding: 10px 22px;
+    border-radius: 30px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    letter-spacing: 0.3px;
+  }
+</style>
+
+<section class="feature-hero">
+  <h1><?= $block->escapeHtml(__('Platform Features')) ?></h1>
+  <p><?= $block->escapeHtml(__('Discover the powerful capabilities built into our Magento-powered e-commerce platform.')) ?></p>
+</section>
+
+<div class="features-grid">
+
+  <div class="feature-card">
+    <span class="feature-icon">🛒</span>
+    <h3><?= $block->escapeHtml(__('Advanced Checkout')) ?></h3>
+    <p><?= $block->escapeHtml(__('Streamlined, one-page checkout with support for multiple payment gateways including PayPal Braintree.')) ?></p>
+  </div>
+
+  <div class="feature-card">
+    <span class="feature-icon">🔍</span>
+    <h3><?= $block->escapeHtml(__('OpenSearch Catalog')) ?> <span class="badge">LIVE</span></h3>
+    <p><?= $block->escapeHtml(__('Lightning-fast product search powered by OpenSearch 2.11, providing instant, relevant results.')) ?></p>
+  </div>
+
+  <div class="feature-card">
+    <span class="feature-icon">🎨</span>
+    <h3><?= $block->escapeHtml(__('Banner Slider')) ?> <span class="badge">LIVE</span></h3>
+    <p><?= $block->escapeHtml(__('Dynamic promotional banners via Mageplaza BannerSlider, fully configurable from the admin panel.')) ?></p>
+  </div>
+
+  <div class="feature-card">
+    <span class="feature-icon">🔐</span>
+    <h3><?= $block->escapeHtml(__('Google reCAPTCHA')) ?> <span class="badge">LIVE</span></h3>
+    <p><?= $block->escapeHtml(__('Bot protection on login, registration, checkout, and contact forms using reCAPTCHA v2.')) ?></p>
+  </div>
+
+  <div class="feature-card">
+    <span class="feature-icon">⚡</span>
+    <h3><?= $block->escapeHtml(__('Redis Caching')) ?></h3>
+    <p><?= $block->escapeHtml(__('Sessions and full-page caching powered by Redis for sub-100ms page load times.')) ?></p>
+  </div>
+
+  <div class="feature-card">
+    <span class="feature-icon">🚀</span>
+    <h3><?= $block->escapeHtml(__('CI/CD with Jenkins')) ?></h3>
+    <p><?= $block->escapeHtml(__('Zero-touch deployments via Jenkins pipeline pulling from GitHub and provisioning Docker containers.')) ?></p>
+  </div>
+
+</div>
+
+<section class="tech-stack">
+  <h2><?= $block->escapeHtml(__('Powered By')) ?></h2>
+  <div class="tech-pills">
+    <span class="tech-pill">Magento 2</span>
+    <span class="tech-pill">Docker</span>
+    <span class="tech-pill">Jenkins CI/CD</span>
+    <span class="tech-pill">Nginx</span>
+    <span class="tech-pill">PHP-FPM</span>
+    <span class="tech-pill">MySQL 8</span>
+    <span class="tech-pill">Redis</span>
+    <span class="tech-pill">OpenSearch 2.11</span>
+    <span class="tech-pill">Mageplaza</span>
+  </div>
+</section>
