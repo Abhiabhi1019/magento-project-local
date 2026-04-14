@@ -2,8 +2,7 @@ pipeline {
     agent any
 
     options {
-        timeout(time: 60, unit: 'MINUTES')
-        ansiColor('xterm')
+        timeout(time: 50, unit: 'MINUTES')
     }
 
     environment {
@@ -11,154 +10,141 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
             }
         }
 
-        stage('Build & Start Services') {
+        stage('Start Containers') {
             steps {
                 sh '''
-                echo "=== RESTARTING CONTAINERS ==="
+                echo "=== START CONTAINERS ==="
                 docker compose down || true
-                docker compose up -d --build
+                docker compose up -d --build || docker compose up -d
                 docker compose ps
                 '''
             }
         }
 
-        stage('Wait for Infrastructure') {
-            parallel {
-                stage('Wait for MySQL') {
-                    steps {
-                        sh 'until docker compose exec -T db mysqladmin ping -h "localhost" -uroot -proot --silent; do echo "Waiting for MySQL..."; sleep 5; done'
-                    }
-                }
-                stage('Wait for OpenSearch') {
-                    steps {
-                        sh 'until docker compose exec -T php curl -sf http://opensearch:9200/_cluster/health > /dev/null; do echo "Waiting for OpenSearch..."; sleep 5; done'
-                    }
-                }
-            }
-        }
-
-        stage('Code Sync & Ownership') {
+        stage('Copy Magento Code') {
             steps {
                 sh '''
-                echo "=== COPYING CODE & FIXING OWNERSHIP ==="
+                echo "=== COPY CODE ==="
+
                 CONTAINER=$(docker compose ps -q php)
-                
-                # Cleanup and copy
-                docker exec -u root $CONTAINER rm -rf /var/www/html/*
-                docker cp ./magento/. $CONTAINER:/var/www/html/
-                
-                # ✅ CRITICAL: Handover ownership to www-data (UID 33)
-                docker exec -u root $CONTAINER chown -R 33:33 /var/www/html
-                docker exec -T php ls -la /var/www/html
+
+                if [ -z "$CONTAINER" ]; then
+                  echo "❌ PHP container not running"
+                  docker compose ps
+                  exit 1
+                fi
+
+                docker exec $CONTAINER rm -rf /var/www/html/*
+
+                if [ -d "magento" ]; then
+                    docker cp ./magento/. $CONTAINER:/var/www/html/
+                else
+                    echo "❌ Magento folder missing"
+                    exit 1
+                fi
+
+                # ✅ FIX PERMISSIONS PROPERLY
+                docker exec -u root $CONTAINER chown -R www-data:www-data /var/www/html
                 '''
             }
         }
 
-        stage('Setup Auth') {
+        stage('Wait for MySQL') {
             steps {
-                withCredentials([
-                    usernamePassword(credentialsId: 'magento-repo', usernameVariable: 'MAGENTO_USER', passwordVariable: 'MAGENTO_PASS'),
-                    usernamePassword(credentialsId: 'mageplaza-repo', usernameVariable: 'MP_USER', passwordVariable: 'MP_PASS')
-                ]) {
-                    sh '''
-                    echo "=== CREATING AUTH.JSON ==="
-                    # Created as current container user (33:33)
-                    docker compose exec -T php bash -c 'cat > /var/www/html/auth.json <<EOF
-{
-  "http-basic": {
-    "repo.magento.com": {
-      "username": "'"$MAGENTO_USER"'",
-      "password": "'"$MAGENTO_PASS"'"
-    },
-    "repo.mageplaza.com": {
-      "username": "'"$MP_USER"'",
-      "password": "'"$MP_PASS"'"
-    }
-  }
-}
-EOF'
-                    '''
-                }
+                sh '''
+                echo "=== WAIT MYSQL ==="
+                until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
+                    sleep 5
+                done
+                '''
             }
         }
 
-        stage('Dependency Management') {
+        stage('Wait for OpenSearch') {
+            steps {
+                sh '''
+                echo "=== WAIT OPENSEARCH ==="
+                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
+                    sleep 5
+                done
+                '''
+            }
+        }
+
+        stage('Composer Install') {
             steps {
                 sh '''
                 echo "=== COMPOSER INSTALL ==="
-                # Runs as www-data (33:33) automatically
-                docker compose exec -T php composer install --no-interaction --prefer-dist --no-progress
+                docker compose exec -T php bash -c "
+                cd /var/www/html &&
+                composer install --no-interaction --prefer-dist --no-progress
+                "
                 '''
             }
         }
 
-        stage('Magento Installation / Upgrade') {
+        stage('Magento Install') {
             steps {
                 sh '''
-                echo "=== CONFIGURING MAGENTO ==="
-                
-                # Check if installed
-                if docker compose exec -T php [ ! -f app/etc/env.php ]; then
-                    echo "--- Installing Magento ---"
-                    docker compose exec -T php php -d memory_limit=2G bin/magento setup:install \
-                        --base-url=http://localhost:8080 \
-                        --db-host=db \
-                        --db-name=magento \
-                        --db-user=root \
-                        --db-password=root \
-                        --admin-user=admin \
-                        --admin-password=Admin123@ \
-                        --admin-email=admin@example.com \
-                        --admin-firstname=Admin \
-                        --admin-lastname=User \
-                        --search-engine=opensearch \
-                        --opensearch-host=opensearch \
-                        --opensearch-port=9200 \
-                        --use-rewrites=1
+                echo "=== MAGENTO INSTALL ==="
+                docker compose exec -T php bash -c "
+                cd /var/www/html
+
+                if [ ! -f app/etc/env.php ]; then
+                    php -d memory_limit=2G bin/magento setup:install \
+                    --base-url=http://localhost:8080 \
+                    --db-host=db \
+                    --db-name=magento \
+                    --db-user=root \
+                    --db-password=root \
+                    --admin-user=admin \
+                    --admin-password=Admin123@ \
+                    --admin-email=admin@example.com \
+                    --admin-firstname=Admin \
+                    --admin-lastname=User \
+                    --language=en_US \
+                    --currency=USD \
+                    --timezone=Asia/Kolkata \
+                    --search-engine=opensearch \
+                    --opensearch-host=opensearch \
+                    --opensearch-port=9200
                 else
-                    echo "--- Running Setup Upgrade ---"
-                    docker compose exec -T php php -d memory_limit=2G bin/magento setup:upgrade
+                    echo "Magento already installed"
                 fi
+                "
                 '''
             }
         }
 
-        stage('Production Build') {
+        stage('Magento Build') {
             steps {
                 sh '''
-                echo "=== DI COMPILE & STATIC DEPLOY ==="
-                docker compose exec -T php php -d memory_limit=2G bin/magento setup:di:compile
-                docker compose exec -T php php -d memory_limit=2G bin/magento setup:static-content:deploy -f
+                echo "=== MAGENTO BUILD ==="
+                docker compose exec -T php bash -c "
+                cd /var/www/html &&
+                rm -rf generated/* var/cache/* var/page_cache/* &&
+                php -d memory_limit=2G bin/magento setup:di:compile &&
+                php bin/magento setup:static-content:deploy -f &&
+                php bin/magento cache:flush
+                "
                 '''
             }
         }
 
-        stage('Final Cleanup & Verification') {
+        stage('Verify') {
             steps {
                 sh '''
-                echo "=== FLUSHING CACHE & TESTING ==="
-                docker compose exec -T php php bin/magento cache:flush
-                
-                # Final health check
-                curl -I http://localhost:8080
+                echo "=== VERIFY ==="
+                docker ps
                 '''
             }
-        }
-    }
-
-    post {
-        always {
-            sh 'docker compose ps'
-        }
-        failure {
-            echo "❌ Pipeline Failed. Checking logs..."
-            sh 'docker compose logs php --tail 50'
         }
     }
 }
