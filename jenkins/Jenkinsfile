@@ -79,60 +79,58 @@ pipeline {
 
         stage('Composer Install') {
             steps {
-                sh """
+                sh '''
                 echo "=== COMPOSER INSTALL ==="
-                docker compose exec -T php bash <<EOF
-                cd /var/www/html
+                docker compose exec -T php bash -c '
+                cd /var/www/html &&
                 composer install --no-interaction --prefer-dist --no-progress
-                EOF
-                """
+                '
+                '''
             }
         }
 
         stage('Magento Install') {
             steps {
-                sh """
+                sh '''
                 echo "=== MAGENTO INSTALL ==="
-                docker compose exec -T php bash <<EOF
+                docker compose exec -T php bash -c '
                 cd /var/www/html
 
                 if [ ! -f app/etc/env.php ]; then
                     echo "Installing Magento..."
 
-                    php bin/magento setup:install \\
-                    --base-url=http://localhost:8080 \\
-                    --db-host=db \\
-                    --db-name=magento \\
-                    --db-user=root \\
-                    --db-password=root \\
-                    --admin-user=admin \\
-                    --admin-password=Admin123@ \\
-                    --admin-email=admin@example.com \\
-                    --search-engine=opensearch \\
-                    --opensearch-host=opensearch \\
+                    php bin/magento setup:install \
+                    --base-url=http://localhost:8080 \
+                    --db-host=db \
+                    --db-name=magento \
+                    --db-user=root \
+                    --db-password=root \
+                    --admin-user=admin \
+                    --admin-password=Admin123@ \
+                    --admin-email=admin@example.com \
+                    --search-engine=opensearch \
+                    --opensearch-host=opensearch \
                     --opensearch-port=9200
                 else
                     echo "Magento already installed"
                 fi
-                EOF
-                """
+                '
+                '''
             }
         }
 
         stage('Magento Build') {
             steps {
-                sh """
+                sh '''
                 echo "=== MAGENTO BUILD ==="
-                docker compose exec -T php bash <<EOF
-                cd /var/www/html
-
-                rm -rf generated/* var/cache/* var/page_cache/*
-
-                php -d memory_limit=2G bin/magento setup:di:compile
-                php bin/magento setup:static-content:deploy -f
+                docker compose exec -T php bash -c '
+                cd /var/www/html &&
+                rm -rf generated/* var/cache/* var/page_cache/* &&
+                php -d memory_limit=2G bin/magento setup:di:compile &&
+                php bin/magento setup:static-content:deploy -f &&
                 php bin/magento cache:flush
-                EOF
-                """
+                '
+                '''
             }
         }
 
@@ -140,7 +138,7 @@ pipeline {
             steps {
                 sh '''
                 echo "=== VERIFY ==="
-                docker compose ps
+                docker ps
                 '''
             }
         }
