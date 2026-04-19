@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     options {
-        timeout(time: 50, unit: 'MINUTES')
+        timeout(time: 60, unit: 'MINUTES')
     }
 
     environment {
@@ -22,7 +22,7 @@ pipeline {
                 sh '''
                 echo "=== START CONTAINERS ==="
                 docker compose down || true
-                docker compose up -d --build || docker compose up -d
+                docker compose up -d --build
                 docker compose ps
                 '''
             }
@@ -43,32 +43,21 @@ pipeline {
 
                 docker exec $CONTAINER rm -rf /var/www/html/*
 
-                if [ -d "magento" ]; then
-                    docker cp ./magento/. $CONTAINER:/var/www/html/
-                else
-                    echo "❌ Magento folder missing"
-                    exit 1
-                fi
+                docker cp ./magento/. $CONTAINER:/var/www/html/
 
                 docker exec -u root $CONTAINER chown -R www-data:www-data /var/www/html
                 '''
             }
         }
 
-        stage('Wait for MySQL') {
+        stage('Wait for Services') {
             steps {
                 sh '''
                 echo "=== WAIT MYSQL ==="
                 until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
                     sleep 5
                 done
-                '''
-            }
-        }
 
-        stage('Wait for OpenSearch') {
-            steps {
-                sh '''
                 echo "=== WAIT OPENSEARCH ==="
                 until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
                     sleep 5
@@ -77,14 +66,15 @@ pipeline {
             }
         }
 
-        stage('Composer Install') {
+        stage('Composer Install (MEMORY FIX)') {
             steps {
                 sh '''
                 echo "=== COMPOSER INSTALL ==="
-                docker compose exec -T php bash -c '
+                docker compose exec -T php bash -c "
                 cd /var/www/html &&
+                export COMPOSER_MEMORY_LIMIT=-1 &&
                 composer install --no-interaction --prefer-dist --no-progress
-                '
+                "
                 '''
             }
         }
@@ -93,13 +83,11 @@ pipeline {
             steps {
                 sh '''
                 echo "=== MAGENTO INSTALL ==="
-                docker compose exec -T php bash -c '
+                docker compose exec -T php bash -c "
                 cd /var/www/html
 
                 if [ ! -f app/etc/env.php ]; then
-                    echo "Installing Magento..."
-
-                    php bin/magento setup:install \
+                    php -d memory_limit=-1 bin/magento setup:install \
                     --base-url=http://localhost:8080 \
                     --db-host=db \
                     --db-name=magento \
@@ -112,33 +100,42 @@ pipeline {
                     --opensearch-host=opensearch \
                     --opensearch-port=9200
                 else
-                    echo "Magento already installed"
+                    echo 'Magento already installed'
                 fi
-                '
+                "
                 '''
             }
         }
 
-        stage('Magento Build') {
+        stage('Magento Build (SAFE)') {
             steps {
                 sh '''
                 echo "=== MAGENTO BUILD ==="
-                docker compose exec -T php bash -c '
+                docker compose exec -T php bash -c "
                 cd /var/www/html &&
+
                 rm -rf generated/* var/cache/* var/page_cache/* &&
-                php -d memory_limit=2G bin/magento setup:di:compile &&
-                php bin/magento setup:static-content:deploy -f &&
+
+                php -d memory_limit=-1 bin/magento setup:di:compile &&
+                php -d memory_limit=-1 bin/magento setup:static-content:deploy -f &&
                 php bin/magento cache:flush
-                '
+                "
                 '''
             }
         }
 
+        stage('Fix Permissions') {
+            steps {
+                sh '''
+                docker compose exec -u root php chown -R www-data:www-data /var/www/html
+                '''
+            }
+        }
         stage('Verify') {
             steps {
                 sh '''
                 echo "=== VERIFY ==="
-                docker ps
+                docker compose ps
                 '''
             }
         }
