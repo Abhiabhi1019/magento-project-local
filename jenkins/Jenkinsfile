@@ -21,6 +21,23 @@ pipeline {
             steps {
                 sh '''
                 echo "=== START CONTAINERS ==="
+
+                # ── Ensure nginx config file exists before Docker bind-mounts it ──
+                # If Docker finds the host path missing it creates a directory,
+                # which then causes the OCI "not a directory" mount error.
+                if [ ! -f docker/nginx/default.conf ]; then
+                    echo "ERROR: docker/nginx/default.conf is missing from workspace!"
+                    echo "Files present in docker/nginx/:"
+                    ls -la docker/nginx/ 2>/dev/null || echo "(directory does not exist)"
+                    exit 1
+                fi
+                # Make sure it really is a regular file (not an accidental directory)
+                if [ -d docker/nginx/default.conf ]; then
+                    echo "ERROR: docker/nginx/default.conf is a DIRECTORY, removing..."
+                    rm -rf docker/nginx/default.conf
+                    exit 1
+                fi
+
                 docker compose down || true
                 docker compose up -d --build
                 docker compose ps
