@@ -101,6 +101,8 @@ services:
         # Pass the host docker group GID so the socket permission matches
         DOCKER_GID: ${DOCKER_GID:-984}
     container_name: magento-jenkins
+    profiles:
+      - ci                          # excluded from plain 'docker compose up'
     ports:
       - "8082:8080"
       - "50000:50000"

@@ -73,14 +73,24 @@ pipeline {
                 set -e
                 echo "=== START CONTAINERS ==="
 
-                # Tear down any previous run cleanly (ignore errors if nothing is running)
+                # ── IMPORTANT ───────────────────────────────────────────────
+                # We only manage the APPLICATION stack here.
+                # The Jenkins service is tagged with profiles: [ci] in
+                # docker-compose.yml and is NEVER touched by this pipeline —
+                # doing so would kill the running Jenkins on port 8082 and
+                # cause "port already allocated" errors.
+                # ────────────────────────────────────────────────────────────
+
+                # Tear down only the app services (leave jenkins untouched)
                 docker compose down --remove-orphans || true
 
-                # Build images passing the host docker GID for socket access
-                docker compose build --build-arg DOCKER_GID="${DOCKER_GID}"
+                # Build only the app images (skip jenkins via no --profile ci)
+                docker compose build --build-arg DOCKER_GID="${DOCKER_GID}" \
+                    nginx php db redis opensearch
 
-                # Start all services in detached mode
-                docker compose up -d
+                # Start only the 5 app services — Jenkins is excluded automatically
+                # because it has profiles: [ci] and we are NOT passing --profile ci
+                docker compose up -d nginx php db redis opensearch
 
                 echo "=== CONTAINER STATUS ==="
                 docker compose ps
