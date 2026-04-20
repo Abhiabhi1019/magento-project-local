@@ -2,159 +2,327 @@ pipeline {
     agent any
 
     options {
-        timeout(time: 60, unit: 'MINUTES')
+        timeout(time: 90, unit: 'MINUTES')
+        // Prevent concurrent builds from stomping on each other's containers
+        disableConcurrentBuilds()
+        // Keep last 10 builds for debugging
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
     environment {
         COMPOSE_PROJECT_NAME = "magento-project-local"
+        // Capture host docker GID so the Jenkins image can match it
+        DOCKER_GID = sh(script: "stat -c '%g' /var/run/docker.sock", returnStdout: true).trim()
     }
 
     stages {
 
+        // ────────────────────────────────────────────────────────────────────
         stage('Checkout Code') {
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 git branch: 'main', url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
             }
         }
 
-        stage('Start Containers') {
+        // ────────────────────────────────────────────────────────────────────
+        stage('Preflight Checks') {
+        // Validate required files exist BEFORE docker compose runs to avoid
+        // the "not a directory" OCI mount error caused by Docker auto-creating
+        // directories when host paths are missing.
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
+                set -e
+                echo "=== PREFLIGHT CHECKS ==="
+
+                echo "Docker version:"
+                docker --version
+                echo "Docker Compose version:"
+                docker compose version
+
+                # --- Nginx config must be a regular file, not a directory ---
+                if [ ! -e docker/nginx/default.conf ]; then
+                    echo "ERROR: docker/nginx/default.conf is missing!"
+                    echo "Files in docker/nginx/:"
+                    ls -la docker/nginx/ 2>/dev/null || echo "  (directory missing)"
+                    exit 1
+                fi
+                if [ -d docker/nginx/default.conf ]; then
+                    echo "ERROR: docker/nginx/default.conf is a DIRECTORY (Docker created it automatically)."
+                    echo "Fix: remove the directory and ensure the file is in git."
+                    exit 1
+                fi
+                echo "OK: docker/nginx/default.conf is a valid file."
+
+                # --- Verify magento source dir ---
+                if [ ! -d magento ]; then
+                    echo "WARNING: magento/ directory is missing — code copy stage will populate it."
+                fi
+
+                echo "=== PREFLIGHT PASSED ==="
+                '''
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        stage('Start Containers') {
+        // ────────────────────────────────────────────────────────────────────
+            steps {
+                sh '''
+                set -e
                 echo "=== START CONTAINERS ==="
 
-                # ── Ensure nginx config file exists before Docker bind-mounts it ──
-                # If Docker finds the host path missing it creates a directory,
-                # which then causes the OCI "not a directory" mount error.
-                if [ ! -f docker/nginx/default.conf ]; then
-                    echo "ERROR: docker/nginx/default.conf is missing from workspace!"
-                    echo "Files present in docker/nginx/:"
-                    ls -la docker/nginx/ 2>/dev/null || echo "(directory does not exist)"
-                    exit 1
-                fi
-                # Make sure it really is a regular file (not an accidental directory)
-                if [ -d docker/nginx/default.conf ]; then
-                    echo "ERROR: docker/nginx/default.conf is a DIRECTORY, removing..."
-                    rm -rf docker/nginx/default.conf
-                    exit 1
-                fi
+                # Tear down any previous run cleanly (ignore errors if nothing is running)
+                docker compose down --remove-orphans || true
 
-                docker compose down || true
-                docker compose up -d --build
+                # Build images passing the host docker GID for socket access
+                docker compose build --build-arg DOCKER_GID="${DOCKER_GID}"
+
+                # Start all services in detached mode
+                docker compose up -d
+
+                echo "=== CONTAINER STATUS ==="
                 docker compose ps
                 '''
             }
         }
 
+        // ────────────────────────────────────────────────────────────────────
         stage('Copy Magento Code') {
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
-                echo "=== COPY CODE ==="
+                set -e
+                echo "=== COPY MAGENTO CODE ==="
 
-                CONTAINER=$(docker compose ps -q php)
-
-                if [ -z "$CONTAINER" ]; then
-                  echo "❌ PHP container not running"
-                  docker compose ps
-                  exit 1
+                PHP=$(docker compose ps -q php)
+                if [ -z "${PHP}" ]; then
+                    echo "ERROR: PHP container is not running"
+                    docker compose ps
+                    docker compose logs php
+                    exit 1
                 fi
 
-                docker exec $CONTAINER rm -rf /var/www/html/*
+                # Clear previous content then copy fresh code
+                docker exec --user root "${PHP}" bash -c "rm -rf /var/www/html/* /var/www/html/.[!.]*"
+                docker cp ./magento/. "${PHP}:/var/www/html/"
 
-                docker cp ./magento/. $CONTAINER:/var/www/html/
+                # Fix ownership — www-data (33:33) must own everything
+                docker exec --user root "${PHP}" chown -R www-data:www-data /var/www/html
 
-                docker exec -u root $CONTAINER chown -R www-data:www-data /var/www/html
+                # Ensure Magento writable directories exist
+                docker exec --user root "${PHP}" bash -c "
+                    mkdir -p /var/www/html/var/cache \
+                             /var/www/html/var/page_cache \
+                             /var/www/html/var/session \
+                             /var/www/html/var/log \
+                             /var/www/html/generated \
+                             /var/www/html/pub/static \
+                             /var/www/html/pub/media && \
+                    chown -R www-data:www-data \
+                        /var/www/html/var \
+                        /var/www/html/generated \
+                        /var/www/html/pub/static \
+                        /var/www/html/pub/media && \
+                    chmod -R ug+rw \
+                        /var/www/html/var \
+                        /var/www/html/generated \
+                        /var/www/html/pub/static \
+                        /var/www/html/pub/media
+                "
+
+                echo "=== CODE COPY COMPLETE ==="
                 '''
             }
         }
 
+        // ────────────────────────────────────────────────────────────────────
         stage('Wait for Services') {
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
-                echo "=== WAIT MYSQL ==="
-                until docker compose exec -T db mysqladmin ping -h "localhost" --silent; do
+                set -e
+                echo "=== WAITING FOR MYSQL ==="
+                RETRIES=30
+                COUNT=0
+                until docker compose exec -T db mysqladmin ping -h localhost --silent 2>/dev/null; do
+                    COUNT=$((COUNT+1))
+                    if [ $COUNT -ge $RETRIES ]; then
+                        echo "ERROR: MySQL did not become ready in time"
+                        docker compose logs db
+                        exit 1
+                    fi
+                    echo "  MySQL not ready yet (attempt $COUNT/$RETRIES)..."
                     sleep 5
                 done
+                echo "OK: MySQL is ready."
 
-                echo "=== WAIT OPENSEARCH ==="
-                until docker compose exec -T php curl -s http://opensearch:9200 > /dev/null; do
+                echo "=== WAITING FOR OPENSEARCH ==="
+                RETRIES=40
+                COUNT=0
+                until docker compose exec -T php curl -sf http://opensearch:9200/_cluster/health > /dev/null 2>&1; do
+                    COUNT=$((COUNT+1))
+                    if [ $COUNT -ge $RETRIES ]; then
+                        echo "ERROR: OpenSearch did not become ready in time"
+                        docker compose logs opensearch
+                        exit 1
+                    fi
+                    echo "  OpenSearch not ready yet (attempt $COUNT/$RETRIES)..."
                     sleep 5
                 done
+                echo "OK: OpenSearch is ready."
                 '''
             }
         }
 
-        stage('Composer Install (MEMORY FIX)') {
+        // ────────────────────────────────────────────────────────────────────
+        stage('Composer Install') {
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
+                set -e
                 echo "=== COMPOSER INSTALL ==="
                 docker compose exec -T php bash -c "
-                cd /var/www/html &&
-                export COMPOSER_MEMORY_LIMIT=-1 &&
-                composer install --no-interaction --prefer-dist --no-progress
+                    set -e
+                    cd /var/www/html
+                    export COMPOSER_MEMORY_LIMIT=-1
+                    composer install --no-interaction --prefer-dist --no-progress --optimize-autoloader
                 "
                 '''
             }
         }
 
+        // ────────────────────────────────────────────────────────────────────
         stage('Magento Install') {
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
+                set -e
                 echo "=== MAGENTO INSTALL ==="
                 docker compose exec -T php bash -c "
-                cd /var/www/html
+                    set -e
+                    cd /var/www/html
 
-                if [ ! -f app/etc/env.php ]; then
-                    php -d memory_limit=-1 bin/magento setup:install \
-                    --base-url=http://localhost:8080 \
-                    --db-host=db \
-                    --db-name=magento \
-                    --db-user=root \
-                    --db-password=root \
-                    --admin-user=admin \
-                    --admin-password=Admin123@ \
-                    --admin-email=admin@example.com \
-                    --search-engine=opensearch \
-                    --opensearch-host=opensearch \
-                    --opensearch-port=9200
-                else
-                    echo 'Magento already installed'
-                fi
+                    if [ -f app/etc/env.php ]; then
+                        echo 'Magento already installed — running setup:upgrade instead.'
+                        php -d memory_limit=-1 bin/magento setup:upgrade --no-interaction
+                    else
+                        echo 'Running fresh Magento install...'
+                        php -d memory_limit=-1 bin/magento setup:install \
+                            --base-url=http://localhost:8080 \
+                            --db-host=db \
+                            --db-name=magento \
+                            --db-user=root \
+                            --db-password=root \
+                            --admin-firstname=Admin \
+                            --admin-lastname=User \
+                            --admin-user=admin \
+                            --admin-password=Admin123@ \
+                            --admin-email=admin@example.com \
+                            --language=en_US \
+                            --currency=USD \
+                            --timezone=America/Chicago \
+                            --use-rewrites=1 \
+                            --search-engine=opensearch \
+                            --opensearch-host=opensearch \
+                            --opensearch-port=9200 \
+                            --no-interaction
+                    fi
                 "
                 '''
             }
         }
 
-        stage('Magento Build (SAFE)') {
+        // ────────────────────────────────────────────────────────────────────
+        stage('Magento Build') {
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
+                set -e
                 echo "=== MAGENTO BUILD ==="
                 docker compose exec -T php bash -c "
-                cd /var/www/html &&
+                    set -e
+                    cd /var/www/html
 
-                rm -rf generated/* var/cache/* var/page_cache/* &&
+                    echo '-- Clearing generated code and caches --'
+                    rm -rf generated/* var/cache/* var/page_cache/*
 
-                php -d memory_limit=-1 bin/magento setup:di:compile &&
-                php -d memory_limit=-1 bin/magento setup:static-content:deploy -f &&
-                php bin/magento cache:flush
+                    echo '-- DI Compile --'
+                    php -d memory_limit=-1 bin/magento setup:di:compile
+
+                    echo '-- Static Content Deploy --'
+                    php -d memory_limit=-1 bin/magento setup:static-content:deploy -f en_US
+
+                    echo '-- Cache flush --'
+                    php bin/magento cache:flush
                 "
                 '''
             }
         }
 
+        // ────────────────────────────────────────────────────────────────────
         stage('Fix Permissions') {
+        // Final permission pass — run as root to ensure everything is correct
+        // after Magento writes generated files as www-data.
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
-                docker compose exec -u root php chown -R www-data:www-data /var/www/html
+                set -e
+                echo "=== FIX PERMISSIONS ==="
+                PHP=$(docker compose ps -q php)
+                docker exec --user root "${PHP}" bash -c "
+                    find /var/www/html -type d -exec chmod 755 {} + && \
+                    find /var/www/html -type f -exec chmod 644 {} + && \
+                    chmod +x /var/www/html/bin/magento && \
+                    chown -R www-data:www-data /var/www/html
+                "
+                echo "=== PERMISSIONS FIXED ==="
                 '''
             }
         }
+
+        // ────────────────────────────────────────────────────────────────────
         stage('Verify') {
+        // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
-                echo "=== VERIFY ==="
+                set -e
+                echo "=== VERIFICATION ==="
                 docker compose ps
+
+                echo ""
+                echo "--- Nginx status ---"
+                docker compose exec -T php curl -sf --max-time 10 http://nginx/health && echo "OK: Nginx is reachable" || echo "WARN: Nginx health check failed"
+
+                echo ""
+                echo "--- Magento version ---"
+                docker compose exec -T php php bin/magento --version
+
+                echo ""
+                echo "--- Container logs (last 20 lines each) ---"
+                docker compose logs --tail=20 nginx
+                docker compose logs --tail=20 php
                 '''
             }
+        }
+    }
+
+    post {
+        success {
+            echo '✅ Pipeline SUCCEEDED — Magento is deployed and running.'
+        }
+        failure {
+            sh '''
+            echo "❌ Pipeline FAILED — collecting diagnostics..."
+            docker compose ps || true
+            docker compose logs --tail=50 nginx || true
+            docker compose logs --tail=50 php  || true
+            docker compose logs --tail=50 db   || true
+            '''
+        }
+        always {
+            echo 'Pipeline complete.'
         }
     }
 }

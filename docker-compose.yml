@@ -2,20 +2,31 @@ services:
 
   nginx:
     image: nginx:latest
+    container_name: magento-nginx
     ports:
       - "8080:80"
     volumes:
-      - ./magento:/var/www/html
-      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - magento-data:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - php
-    restart: always
+      php:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   php:
-    build: ./docker/php
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: magento-php
     user: "33:33"
     volumes:
-      - ./magento:/var/www/html
+      - magento-data:/var/www/html
     depends_on:
       db:
         condition: service_healthy
@@ -23,56 +34,85 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    restart: always
+    restart: unless-stopped
 
   db:
     image: mysql:8
+    container_name: magento-db
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: magento
+      MYSQL_USER: magento
+      MYSQL_PASSWORD: magento
     ports:
       - "3308:3306"
     volumes:
       - db-data:/var/lib/mysql
-    restart: always
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 15
+      start_period: 30s
 
   redis:
-    image: redis:latest
-    restart: always
+    image: redis:7-alpine
+    container_name: magento-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   opensearch:
     image: opensearchproject/opensearch:2.11.0
+    container_name: magento-opensearch
     environment:
       - discovery.type=single-node
       - plugins.security.disabled=true
       - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - DISABLE_INSTALL_DEMO_CONFIG=true
     ports:
       - "9202:9200"
-    restart: always
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qv '\"status\":\"red\"'"]
       interval: 15s
       timeout: 10s
-      retries: 12
-      start_period: 30s
+      retries: 15
+      start_period: 60s
 
   jenkins:
-    build: ./jenkins
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
+      args:
+        # Pass the host docker group GID so the socket permission matches
+        DOCKER_GID: ${DOCKER_GID:-984}
+    container_name: magento-jenkins
     ports:
       - "8082:8080"
+      - "50000:50000"
     volumes:
       - jenkins-data:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
-    links:
-      - php
-      - db
-    restart: always
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+    restart: unless-stopped
 
 volumes:
+  magento-data:
   db-data:
+  opensearch-data:
   jenkins-data:
