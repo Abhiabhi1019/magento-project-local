@@ -3,15 +3,12 @@ pipeline {
 
     options {
         timeout(time: 90, unit: 'MINUTES')
-        // Prevent concurrent builds from stomping on each other's containers
         disableConcurrentBuilds()
-        // Keep last 10 builds for debugging
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
     environment {
         COMPOSE_PROJECT_NAME = "magento-project-local"
-        // Capture host docker GID so the Jenkins image can match it
         DOCKER_GID = sh(script: "stat -c '%g' /var/run/docker.sock", returnStdout: true).trim()
     }
 
@@ -26,123 +23,151 @@ pipeline {
         }
 
         // ────────────────────────────────────────────────────────────────────
-        stage('Preflight Checks') {
-        // Validate required files exist BEFORE docker compose runs to avoid
-        // the "not a directory" OCI mount error caused by Docker auto-creating
-        // directories when host paths are missing.
+        stage('Debug Workspace') {
+        // WHY THIS STAGE EXISTS:
+        // Jenkins runs inside Docker (DooD — Docker outside of Docker).
+        // Volume bind-mounts in docker-compose.yml are resolved by the HOST
+        // Docker daemon, not by the Jenkins container. So paths like ./magento
+        // refer to a path on the HOST filesystem — which is the jenkins-data
+        // Docker volume, NOT the Jenkins container's internal filesystem.
+        //
+        // This stage:
+        //   1) Shows exactly what was checked out (debugging aid)
+        //   2) Computes WORKSPACE_HOST — the real HOST path of this workspace
+        //   3) Writes WORKSPACE_HOST to .env so docker-compose can use it
+        // ────────────────────────────────────────────────────────────────────
+            steps {
+                script {
+                    echo "=== DEBUG WORKSPACE ==="
+                    echo "Workspace (inside container): ${env.WORKSPACE}"
+
+                    sh 'echo "--- Top-level workspace contents ---" && ls -la'
+                    sh 'echo "--- magento/ directory ---" && ls -la magento/ 2>/dev/null || echo "WARNING: magento/ not found in workspace"'
+                    sh 'echo "--- docker/ directory ---" && ls -la docker/ 2>/dev/null || echo "WARNING: docker/ not found"'
+
+                    // ── Compute HOST path of this Jenkins workspace ─────────
+                    // Jenkins home (/var/jenkins_home) is a named Docker volume.
+                    // On the HOST it lives at:
+                    //   /var/lib/docker/volumes/<project>_jenkins-data/_data
+                    // We ask the Docker daemon where it mounted /var/jenkins_home,
+                    // then reconstruct the workspace path from that.
+                    def hostJenkinsHome = sh(
+                        script: """
+                            docker inspect \$(hostname) \
+                              --format '{{ range .Mounts }}{{ if eq .Destination "/var/jenkins_home" }}{{ .Source }}{{ end }}{{ end }}'
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    if (!hostJenkinsHome) {
+                        error("Could not determine HOST path of /var/jenkins_home. Is the Jenkins container running with a named volume?")
+                    }
+
+                    // WORKSPACE inside container = /var/jenkins_home/workspace/JOB_NAME
+                    // Strip the /var/jenkins_home prefix to get the suffix
+                    def workspaceSuffix = env.WORKSPACE.replace('/var/jenkins_home', '')
+                    env.WORKSPACE_HOST = hostJenkinsHome + workspaceSuffix
+
+                    echo "Jenkins home (host):  ${hostJenkinsHome}"
+                    echo "Workspace (host):     ${env.WORKSPACE_HOST}"
+
+                    // Write to .env so docker-compose picks it up automatically
+                    sh """
+                        echo "WORKSPACE_HOST=${env.WORKSPACE_HOST}" > .env
+                        echo "DOCKER_GID=${env.DOCKER_GID}"         >> .env
+                        echo "--- .env written ---"
+                        cat .env
+                    """
+                }
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        stage('Validate Files') {
+        // Verify every required file exists in the workspace BEFORE running
+        // docker compose. Missing files cause cryptic OCI / mount errors.
         // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
                 set -e
-                echo "=== PREFLIGHT CHECKS ==="
+                echo "=== VALIDATE FILES ==="
 
-                echo "Docker version:"
-                docker --version
-                echo "Docker Compose version:"
-                docker compose version
+                ERRORS=0
 
-                # --- Nginx config must be a regular file, not a directory ---
-                if [ ! -e docker/nginx/default.conf ]; then
-                    echo "ERROR: docker/nginx/default.conf is missing!"
-                    echo "Files in docker/nginx/:"
-                    ls -la docker/nginx/ 2>/dev/null || echo "  (directory missing)"
+                check_file() {
+                    if [ ! -f "$1" ]; then
+                        echo "❌ MISSING FILE : $1"
+                        ERRORS=$((ERRORS+1))
+                    elif [ -d "$1" ]; then
+                        echo "❌ IS A DIRECTORY: $1  (Docker created this — remove it and re-commit the file)"
+                        ERRORS=$((ERRORS+1))
+                    else
+                        echo "✅ OK: $1"
+                    fi
+                }
+
+                check_dir() {
+                    if [ ! -d "$1" ]; then
+                        echo "❌ MISSING DIR : $1"
+                        ERRORS=$((ERRORS+1))
+                    else
+                        echo "✅ OK: $1/"
+                    fi
+                }
+
+                # ── Required config files ────────────────────────────────────
+                check_file "docker/nginx/default.conf"
+                check_file "docker/php/Dockerfile"
+                check_file "jenkins/Dockerfile"
+                check_file "docker-compose.yml"
+
+                # ── Required Magento source files ────────────────────────────
+                check_file "magento/composer.json"
+                check_file "magento/composer.lock"
+                check_dir  "magento/app"
+                check_dir  "magento/bin"
+                check_dir  "magento/pub"
+
+                echo ""
+                if [ "$ERRORS" -gt 0 ]; then
+                    echo "❌ $ERRORS validation error(s) found. Fix before deploying."
                     exit 1
                 fi
-                if [ -d docker/nginx/default.conf ]; then
-                    echo "ERROR: docker/nginx/default.conf is a DIRECTORY (Docker created it automatically)."
-                    echo "Fix: remove the directory and ensure the file is in git."
-                    exit 1
-                fi
-                echo "OK: docker/nginx/default.conf is a valid file."
 
-                # --- Verify magento source dir ---
-                if [ ! -d magento ]; then
-                    echo "WARNING: magento/ directory is missing — code copy stage will populate it."
-                fi
-
-                echo "=== PREFLIGHT PASSED ==="
+                echo "✅ All required files present."
+                echo "Docker version:   $(docker --version)"
+                echo "Compose version:  $(docker compose version)"
+                echo "=== VALIDATION PASSED ==="
                 '''
             }
         }
 
         // ────────────────────────────────────────────────────────────────────
         stage('Start Containers') {
+        // Starts only the 5 app services. Jenkins is excluded via profiles:[ci]
+        // to prevent the "port 8082 already allocated" error.
+        // WORKSPACE_HOST in .env makes docker-compose bind-mount the workspace
+        // magento/ directory directly — no docker cp needed.
         // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
                 set -e
                 echo "=== START CONTAINERS ==="
+                echo "WORKSPACE_HOST = ${WORKSPACE_HOST}"
 
-                # ── IMPORTANT ───────────────────────────────────────────────
-                # We only manage the APPLICATION stack here.
-                # The Jenkins service is tagged with profiles: [ci] in
-                # docker-compose.yml and is NEVER touched by this pipeline —
-                # doing so would kill the running Jenkins on port 8082 and
-                # cause "port already allocated" errors.
-                # ────────────────────────────────────────────────────────────
-
-                # Tear down only the app services (leave jenkins untouched)
+                # Tear down app stack only (never touches jenkins container)
                 docker compose down --remove-orphans || true
 
-                # Build only the app images (skip jenkins via no --profile ci)
-                docker compose build --build-arg DOCKER_GID="${DOCKER_GID}" \
-                    nginx php db redis opensearch
+                # Build only app images
+                docker compose build nginx php db redis opensearch
 
-                # Start only the 5 app services — Jenkins is excluded automatically
-                # because it has profiles: [ci] and we are NOT passing --profile ci
+                # Start only the 5 app services
+                # Jenkins is excluded automatically (profiles: [ci] not activated)
                 docker compose up -d nginx php db redis opensearch
 
+                echo ""
                 echo "=== CONTAINER STATUS ==="
                 docker compose ps
-                '''
-            }
-        }
-
-        // ────────────────────────────────────────────────────────────────────
-        stage('Copy Magento Code') {
-        // ────────────────────────────────────────────────────────────────────
-            steps {
-                sh '''
-                set -e
-                echo "=== COPY MAGENTO CODE ==="
-
-                PHP=$(docker compose ps -q php)
-                if [ -z "${PHP}" ]; then
-                    echo "ERROR: PHP container is not running"
-                    docker compose ps
-                    docker compose logs php
-                    exit 1
-                fi
-
-                # Clear previous content then copy fresh code
-                docker exec --user root "${PHP}" bash -c "rm -rf /var/www/html/* /var/www/html/.[!.]*"
-                docker cp ./magento/. "${PHP}:/var/www/html/"
-
-                # Fix ownership — www-data (33:33) must own everything
-                docker exec --user root "${PHP}" chown -R www-data:www-data /var/www/html
-
-                # Ensure Magento writable directories exist
-                docker exec --user root "${PHP}" bash -c "
-                    mkdir -p /var/www/html/var/cache \
-                             /var/www/html/var/page_cache \
-                             /var/www/html/var/session \
-                             /var/www/html/var/log \
-                             /var/www/html/generated \
-                             /var/www/html/pub/static \
-                             /var/www/html/pub/media && \
-                    chown -R www-data:www-data \
-                        /var/www/html/var \
-                        /var/www/html/generated \
-                        /var/www/html/pub/static \
-                        /var/www/html/pub/media && \
-                    chmod -R ug+rw \
-                        /var/www/html/var \
-                        /var/www/html/generated \
-                        /var/www/html/pub/static \
-                        /var/www/html/pub/media
-                "
-
-                echo "=== CODE COPY COMPLETE ==="
                 '''
             }
         }
@@ -153,6 +178,7 @@ pipeline {
             steps {
                 sh '''
                 set -e
+
                 echo "=== WAITING FOR MYSQL ==="
                 RETRIES=30
                 COUNT=0
@@ -188,11 +214,33 @@ pipeline {
 
         // ────────────────────────────────────────────────────────────────────
         stage('Composer Install') {
+        // The workspace magento/ is bind-mounted into the PHP container at
+        // /var/www/html. Composer installs vendor/ directly into the workspace
+        // — no copying needed, changes are immediately visible in the container.
         // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
                 set -e
                 echo "=== COMPOSER INSTALL ==="
+
+                # Ensure writable dirs exist and are owned by www-data (33:33)
+                PHP=$(docker compose ps -q php)
+                docker exec --user root "${PHP}" bash -c "
+                    mkdir -p /var/www/html/var/cache \
+                             /var/www/html/var/page_cache \
+                             /var/www/html/var/session \
+                             /var/www/html/var/log \
+                             /var/www/html/generated \
+                             /var/www/html/pub/static \
+                             /var/www/html/pub/media && \
+                    chown -R www-data:www-data /var/www/html && \
+                    chmod -R ug+rw \
+                        /var/www/html/var \
+                        /var/www/html/generated \
+                        /var/www/html/pub/static \
+                        /var/www/html/pub/media
+                "
+
                 docker compose exec -T php bash -c "
                     set -e
                     cd /var/www/html
@@ -272,27 +320,6 @@ pipeline {
         }
 
         // ────────────────────────────────────────────────────────────────────
-        stage('Fix Permissions') {
-        // Final permission pass — run as root to ensure everything is correct
-        // after Magento writes generated files as www-data.
-        // ────────────────────────────────────────────────────────────────────
-            steps {
-                sh '''
-                set -e
-                echo "=== FIX PERMISSIONS ==="
-                PHP=$(docker compose ps -q php)
-                docker exec --user root "${PHP}" bash -c "
-                    find /var/www/html -type d -exec chmod 755 {} + && \
-                    find /var/www/html -type f -exec chmod 644 {} + && \
-                    chmod +x /var/www/html/bin/magento && \
-                    chown -R www-data:www-data /var/www/html
-                "
-                echo "=== PERMISSIONS FIXED ==="
-                '''
-            }
-        }
-
-        // ────────────────────────────────────────────────────────────────────
         stage('Verify') {
         // ────────────────────────────────────────────────────────────────────
             steps {
@@ -302,17 +329,23 @@ pipeline {
                 docker compose ps
 
                 echo ""
-                echo "--- Nginx status ---"
-                docker compose exec -T php curl -sf --max-time 10 http://nginx/health && echo "OK: Nginx is reachable" || echo "WARN: Nginx health check failed"
+                echo "--- Nginx reachability ---"
+                docker compose exec -T php curl -sf --max-time 10 http://nginx/health \
+                    && echo "✅ Nginx is reachable" \
+                    || echo "⚠️  Nginx health check failed (check logs)"
 
                 echo ""
                 echo "--- Magento version ---"
                 docker compose exec -T php php bin/magento --version
 
                 echo ""
-                echo "--- Container logs (last 20 lines each) ---"
-                docker compose logs --tail=20 nginx
-                docker compose logs --tail=20 php
+                echo "--- Magento module status ---"
+                docker compose exec -T php php bin/magento module:status | head -20
+
+                echo ""
+                echo "--- Container logs (last 15 lines) ---"
+                docker compose logs --tail=15 nginx
+                docker compose logs --tail=15 php
                 '''
             }
         }
@@ -321,14 +354,36 @@ pipeline {
     post {
         success {
             echo '✅ Pipeline SUCCEEDED — Magento is deployed and running.'
+            echo "   Storefront : http://localhost:8080"
+            echo "   Jenkins    : http://localhost:8082"
         }
         failure {
             sh '''
             echo "❌ Pipeline FAILED — collecting diagnostics..."
+            echo ""
+            echo "=== Container status ==="
             docker compose ps || true
+
+            echo ""
+            echo "=== Nginx logs ==="
             docker compose logs --tail=50 nginx || true
-            docker compose logs --tail=50 php  || true
-            docker compose logs --tail=50 db   || true
+
+            echo ""
+            echo "=== PHP logs ==="
+            docker compose logs --tail=50 php || true
+
+            echo ""
+            echo "=== MySQL logs ==="
+            docker compose logs --tail=30 db || true
+
+            echo ""
+            echo "=== OpenSearch logs ==="
+            docker compose logs --tail=30 opensearch || true
+
+            echo ""
+            echo "=== Workspace files ==="
+            ls -la || true
+            ls -la magento/ 2>/dev/null | head -20 || true
             '''
         }
         always {

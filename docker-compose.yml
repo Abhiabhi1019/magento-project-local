@@ -6,8 +6,12 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - magento-data:/var/www/html:ro
-      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # WORKSPACE_HOST is the HOST filesystem path to the Jenkins workspace.
+      # This is computed in the pipeline's Debug Workspace stage and written
+      # to the .env file so Docker Compose can resolve it correctly.
+      # For local development, WORKSPACE_HOST defaults to the project root.
+      - ${WORKSPACE_HOST:-.}/magento:/var/www/html:ro
+      - ${WORKSPACE_HOST:-.}/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       php:
         condition: service_started
@@ -26,7 +30,8 @@ services:
     container_name: magento-php
     user: "33:33"
     volumes:
-      - magento-data:/var/www/html
+      # Same bind mount — no docker cp needed. The workspace IS the source.
+      - ${WORKSPACE_HOST:-.}/magento:/var/www/html
     depends_on:
       db:
         condition: service_healthy
@@ -98,7 +103,6 @@ services:
       context: ./jenkins
       dockerfile: Dockerfile
       args:
-        # Pass the host docker group GID so the socket permission matches
         DOCKER_GID: ${DOCKER_GID:-984}
     container_name: magento-jenkins
     profiles:
@@ -114,7 +118,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  magento-data:
   db-data:
   opensearch-data:
   jenkins-data:
