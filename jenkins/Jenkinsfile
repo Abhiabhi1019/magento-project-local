@@ -252,25 +252,22 @@ pipeline {
         }
 
         // ────────────────────────────────────────────────────────────────────
-        stage('Magento Install') {
-        // WHY WE CLEAR generated/ HERE:
-        // The Jenkins workspace is PERSISTENT across builds (jenkins-data volume).
-        // generated/ and var/ are gitignored, so they are NEVER cleaned by git.
-        // A previous build's generated/ proxy classes may reference old vendor/
-        // class structures. When setup:upgrade runs, PHP's ClassLoader tries to
-        // include those stale proxy files → "Failed to open stream" fatal error.
-        // Solution: always wipe generated/ and all caches before any magento CLI
-        // command that loads the framework bootstrap (setup:upgrade / setup:install).
+        stage('Magento Setup & Build') {
+        // Enforces correct execution order:
+        // 1. DI compile
+        // 2. Setup upgrade (--keep-generated)
+        // 3. Static content deploy
+        // 4. Cache flush
         // ────────────────────────────────────────────────────────────────────
             steps {
                 sh '''
                 set -e
-                echo "=== MAGENTO INSTALL ==="
+                echo "=== MAGENTO SETUP & BUILD ==="
                 docker compose exec -T php bash -c "
                     set -e
                     cd /var/www/html
 
-                    echo '-- Clearing stale generated code and all caches (required before any setup: command) --'
+                    echo '-- Clearing stale generated code and all caches --'
                     rm -rf generated/* \
                            var/cache/* \
                            var/page_cache/* \
@@ -278,11 +275,8 @@ pipeline {
                            var/di/* \
                            var/generation/*
 
-                    if [ -f app/etc/env.php ]; then
-                        echo 'env.php found — Magento already installed, running setup:upgrade...'
-                        php -d memory_limit=-1 bin/magento setup:upgrade --no-interaction
-                    else
-                        echo 'No env.php — running fresh Magento install...'
+                    if [ ! -f app/etc/env.php ]; then
+                        echo 'No env.php — running fresh Magento install first...'
                         php -d memory_limit=-1 bin/magento setup:install \
                             --base-url=http://localhost:8080 \
                             --db-host=db \
@@ -303,38 +297,22 @@ pipeline {
                             --opensearch-port=9200 \
                             --no-interaction
                     fi
-                "
-                '''
-            }
-        }
 
-        // ────────────────────────────────────────────────────────────────────
-        stage('Magento Build') {
-        // ────────────────────────────────────────────────────────────────────
-            steps {
-                sh '''
-                set -e
-                echo "=== MAGENTO BUILD ==="
-                docker compose exec -T php bash -c "
-                    set -e
-                    cd /var/www/html
-
-                    echo '-- Clearing generated code and caches --'
-                    rm -rf generated/* var/cache/* var/page_cache/*
-
-                    echo '-- DI Compile --'
+                    echo '-- 1. DI Compile --'
                     php -d memory_limit=-1 bin/magento setup:di:compile
 
-                    echo '-- Static Content Deploy --'
+                    echo '-- 2. Setup Upgrade --'
+                    php -d memory_limit=-1 bin/magento setup:upgrade --keep-generated --no-interaction
+
+                    echo '-- 3. Static Content Deploy --'
                     php -d memory_limit=-1 bin/magento setup:static-content:deploy -f en_US
 
-                    echo '-- Cache flush --'
+                    echo '-- 4. Cache flush --'
                     php bin/magento cache:flush
                 "
                 '''
             }
         }
-
         // ────────────────────────────────────────────────────────────────────
         stage('Verify') {
         // ────────────────────────────────────────────────────────────────────
