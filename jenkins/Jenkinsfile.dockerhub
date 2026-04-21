@@ -1,0 +1,227 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  Magento PHP Image — Build & Push to Docker Hub
+//
+//  Triggered by: Git push to main branch
+//  Image name  : abhiabhi007/magento-php
+//  Tag strategy: BUILD_NUMBER (e.g. 42) + "latest" alias
+//
+//  Prerequisites in Jenkins:
+//    • Credential ID "dockerhub-credentials" (Username+Password)
+//      Username : abhiabhi007
+//      Password : your Docker Hub access token (NOT your login password)
+// ═══════════════════════════════════════════════════════════════════════════
+
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '15'))
+    }
+
+    // ── All image coordinates in one place ───────────────────────────────────
+    environment {
+        DOCKERHUB_USER    = "abhiabhi007"
+        IMAGE_NAME        = "magento-php"
+        IMAGE_FULL        = "${DOCKERHUB_USER}/${IMAGE_NAME}"
+        IMAGE_TAG         = "${BUILD_NUMBER}"          // e.g. 42
+        DOCKERFILE_PATH   = "docker/php/Dockerfile"
+        BUILD_CONTEXT     = "docker/php"
+        // Jenkins credential ID — set this up first (see README)
+        DOCKERHUB_CRED_ID = "dockerhub-credentials"
+    }
+
+    stages {
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Checkout') {
+        // ─────────────────────────────────────────────────────────────────────
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/Abhiabhi1019/magento-project-local.git'
+                sh '''
+                echo "=== CHECKOUT ==="
+                echo "Branch    : $(git rev-parse --abbrev-ref HEAD)"
+                echo "Commit    : $(git rev-parse --short HEAD)"
+                echo "Author    : $(git log -1 --format='%an')"
+                echo "Message   : $(git log -1 --format='%s')"
+                '''
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Validate Dockerfile') {
+        // ─────────────────────────────────────────────────────────────────────
+            steps {
+                sh '''
+                set -e
+                echo "=== VALIDATE DOCKERFILE ==="
+
+                if [ ! -f "${DOCKERFILE_PATH}" ]; then
+                    echo "❌ ERROR: ${DOCKERFILE_PATH} not found in workspace"
+                    ls -la docker/php/ 2>/dev/null || echo "  docker/php/ directory missing"
+                    exit 1
+                fi
+
+                echo "✅ Dockerfile found: ${DOCKERFILE_PATH}"
+                echo "--- Dockerfile preview (first 10 lines) ---"
+                head -10 "${DOCKERFILE_PATH}"
+                '''
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Build Docker Image') {
+        // Builds the image and tags it with:
+        //   abhiabhi007/magento-php:42      ← BUILD_NUMBER
+        //   abhiabhi007/magento-php:latest  ← always updated
+        //   abhiabhi007/magento-php:<SHA>   ← full git traceability
+        // ─────────────────────────────────────────────────────────────────────
+            steps {
+                sh '''
+                set -e
+                echo "=== BUILD DOCKER IMAGE ==="
+
+                GIT_SHA=$(git rev-parse --short HEAD)
+
+                echo "Image     : ${IMAGE_FULL}"
+                echo "Tags      : ${IMAGE_TAG} | latest | ${GIT_SHA}"
+                echo "Context   : ${BUILD_CONTEXT}"
+                echo ""
+
+                # Build with all three tags in a single layer cache pass
+                docker build \
+                    --file  "${DOCKERFILE_PATH}" \
+                    --tag   "${IMAGE_FULL}:${IMAGE_TAG}" \
+                    --tag   "${IMAGE_FULL}:latest" \
+                    --tag   "${IMAGE_FULL}:${GIT_SHA}" \
+                    --label "build.number=${IMAGE_TAG}" \
+                    --label "git.sha=${GIT_SHA}" \
+                    --label "git.branch=$(git rev-parse --abbrev-ref HEAD)" \
+                    --label "built.by=jenkins" \
+                    "${BUILD_CONTEXT}"
+
+                echo ""
+                echo "✅ Image built successfully"
+                docker images "${IMAGE_FULL}" --format "table {{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedAt}}"
+                '''
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Push to Docker Hub') {
+        // Uses the "dockerhub-credentials" credential stored in Jenkins.
+        // withCredentials() injects $USR and $PSW into the shell env —
+        // they are masked in all log output automatically by Jenkins.
+        // ─────────────────────────────────────────────────────────────────────
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: "${DOCKERHUB_CRED_ID}",
+                    usernameVariable: 'DOCKER_USR',
+                    passwordVariable: 'DOCKER_PSW'
+                )]) {
+                    sh '''
+                    set -e
+                    echo "=== PUSH TO DOCKER HUB ==="
+
+                    # Authenticate — password is masked in Jenkins logs
+                    echo "${DOCKER_PSW}" | docker login --username "${DOCKER_USR}" --password-stdin
+                    echo "✅ Logged in as ${DOCKER_USR}"
+
+                    GIT_SHA=$(git rev-parse --short HEAD)
+
+                    # Push all three tags
+                    echo "Pushing tag: ${IMAGE_TAG}"
+                    docker push "${IMAGE_FULL}:${IMAGE_TAG}"
+
+                    echo "Pushing tag: latest"
+                    docker push "${IMAGE_FULL}:latest"
+
+                    echo "Pushing tag: ${GIT_SHA}"
+                    docker push "${IMAGE_FULL}:${GIT_SHA}"
+
+                    echo ""
+                    echo "✅ All tags pushed successfully"
+                    echo "   → https://hub.docker.com/r/${IMAGE_FULL}/tags"
+
+                    # Always logout so credentials are not cached on the agent
+                    docker logout
+                    '''
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Verify Push') {
+        // Pulls the manifest from Docker Hub (no image download) to confirm
+        // the push succeeded. Fails the build if the tag is unreachable.
+        // ─────────────────────────────────────────────────────────────────────
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: "${DOCKERHUB_CRED_ID}",
+                    usernameVariable: 'DOCKER_USR',
+                    passwordVariable: 'DOCKER_PSW'
+                )]) {
+                    sh '''
+                    set -e
+                    echo "=== VERIFY PUSH ==="
+
+                    echo "${DOCKER_PSW}" | docker login --username "${DOCKER_USR}" --password-stdin
+
+                    # Pull manifest only (--dry-run equivalent)
+                    docker manifest inspect "${IMAGE_FULL}:${IMAGE_TAG}" > /dev/null \
+                        && echo "✅ Tag ${IMAGE_TAG} confirmed on Docker Hub" \
+                        || { echo "❌ Tag ${IMAGE_TAG} NOT found on Docker Hub"; exit 1; }
+
+                    docker logout
+                    '''
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        stage('Cleanup Local Images') {
+        // Remove local image tags to prevent disk fill-up on the Jenkins agent.
+        // Named volumes and running containers are NOT affected.
+        // ─────────────────────────────────────────────────────────────────────
+            steps {
+                sh '''
+                echo "=== CLEANUP LOCAL IMAGES ==="
+                GIT_SHA=$(git rev-parse --short HEAD)
+
+                docker rmi "${IMAGE_FULL}:${IMAGE_TAG}" 2>/dev/null || true
+                docker rmi "${IMAGE_FULL}:latest"       2>/dev/null || true
+                docker rmi "${IMAGE_FULL}:${GIT_SHA}"   2>/dev/null || true
+
+                echo "✅ Local image tags removed"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo """
+╔══════════════════════════════════════════════════════╗
+║  ✅  BUILD #${BUILD_NUMBER} PUSHED SUCCESSFULLY       ║
+║                                                      ║
+║  Image  : abhiabhi007/magento-php                    ║
+║  Tags   : ${BUILD_NUMBER} | latest | <git-sha>       ║
+║  URL    : https://hub.docker.com/r/abhiabhi007/magento-php/tags ║
+╚══════════════════════════════════════════════════════╝
+"""
+        }
+        failure {
+            sh '''
+            echo "❌ PIPELINE FAILED — diagnostics:"
+            docker images | grep magento-php || true
+            docker logout  2>/dev/null || true
+            '''
+        }
+        always {
+            // Safety net: always logout even if a stage crashed mid-execution
+            sh 'docker logout 2>/dev/null || true'
+        }
+    }
+}
