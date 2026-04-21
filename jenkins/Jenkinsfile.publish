@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    environment {
+        // TODO: Replace with your actual Docker Hub username and image name
+        DOCKER_IMAGE = 'your_dockerhub_username/magento-php'
+        
+        // This credentials ID must match the one you create in Jenkins
+        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
+    }
+
+    stages {
+        // ────────────────────────────────────────────────────────────────────
+        stage('Checkout Code') {
+        // ────────────────────────────────────────────────────────────────────
+            steps {
+                // Checkout the repository that triggered the webhook
+                checkout scm
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        stage('Build Docker Image') {
+        // ────────────────────────────────────────────────────────────────────
+            steps {
+                script {
+                    echo "=== BUILDING DOCKER IMAGE ==="
+                    // We build the PHP image as an example.
+                    // The build context is docker/php and it uses the Dockerfile there.
+                    // We tag it with the Jenkins BUILD_NUMBER for versioning.
+                    
+                    def buildCommand = "docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} -t ${DOCKER_IMAGE}:latest -f docker/php/Dockerfile docker/php"
+                    
+                    sh buildCommand
+                }
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        stage('Push to Docker Hub') {
+        // ────────────────────────────────────────────────────────────────────
+            steps {
+                script {
+                    echo "=== PUSHING DOCKER IMAGE TO DOCKER HUB ==="
+                    
+                    // Securely retrieve Docker Hub credentials
+                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
+                        // Login to Docker Hub
+                        sh "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
+                        
+                        // Push the versioned tag
+                        sh "docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                        
+                        // Push the latest tag
+                        sh "docker push ${DOCKER_IMAGE}:latest"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Successfully built and pushed ${env.DOCKER_IMAGE}:${env.BUILD_NUMBER} to Docker Hub!"
+        }
+        failure {
+            echo "❌ Pipeline failed. Check the logs above for details."
+        }
+        always {
+            // Clean up local images to save space on the Jenkins agent
+            sh "docker rmi ${DOCKER_IMAGE}:${BUILD_NUMBER} || true"
+            sh "docker rmi ${DOCKER_IMAGE}:latest || true"
+            sh "docker logout"
+            echo 'Pipeline cleanup complete.'
+        }
+    }
+}
