@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "58597e69a6de2e51f7a00a3a3458eda8",
+    "content-hash": "aeca29f9aed20168f157a1958506e2db",
     "packages": [
         {
             "name": "2tvenom/cborencode",
@@ -19437,51 +19437,6 @@
             "time": "2025-12-11T10:52:59+00:00"
         },
         {
-            "name": "mageplaza/magento-2-banner-slider-extension",
-            "version": "4.1.1",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/mageplaza/magento-2-banner-slider.git",
-                "reference": "63a4bc505c60dd08b66ba80fba21c32f93921421"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/mageplaza/magento-2-banner-slider/zipball/63a4bc505c60dd08b66ba80fba21c32f93921421",
-                "reference": "63a4bc505c60dd08b66ba80fba21c32f93921421",
-                "shasum": ""
-            },
-            "require": {
-                "mageplaza/module-core": "^1.5.13"
-            },
-            "type": "magento2-module",
-            "autoload": {
-                "files": [
-                    "registration.php"
-                ],
-                "psr-4": {
-                    "Mageplaza\\BannerSlider\\": ""
-                }
-            },
-            "notification-url": "https://packagist.org/downloads/",
-            "license": [
-                "proprietary"
-            ],
-            "authors": [
-                {
-                    "name": "Mageplaza",
-                    "email": "support@mageplaza.com",
-                    "homepage": "https://www.mageplaza.com",
-                    "role": "Technical Support"
-                }
-            ],
-            "description": "Magento 2 Banner Slider extension",
-            "support": {
-                "source": "https://github.com/mageplaza/magento-2-banner-slider/tree/v4.1.1"
-            },
-            "abandoned": "mageplaza/module-banner-slider",
-            "time": "2025-05-21T09:18:23+00:00"
-        },
-        {
             "name": "mageplaza/magento-2-social-login",
             "version": "4.1.21",
             "source": {
@@ -30666,5 +30621,5 @@
     "prefer-lowest": false,
     "platform": {},
     "platform-dev": {},
-    "plugin-api-version": "2.9.0"
+    "plugin-api-version": "2.6.0"
 }
