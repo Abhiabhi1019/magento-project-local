@@ -135,13 +135,25 @@ pipeline {
             steps {
                 script {
                     echo "=== PUBLISHING IMAGE ==="
-                    // Build a production-ready image including the code
-                    sh "set -x && docker build -t ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER} -t ${DOCKER_HUB_IMAGE}:latest -f docker/php/Dockerfile ."
+                    // Build context is PROJECT ROOT (.) so we can access magento/ folder if needed
+                    // Dockerfile is at docker/php/Dockerfile
+                    sh """
+                        set -x
+                        docker build -t ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER} \
+                                     -t ${DOCKER_HUB_IMAGE}:latest \
+                                     -f docker/php/Dockerfile .
+                        
+                        echo "--- Verifying images ---"
+                        docker images | grep ${DOCKER_HUB_IMAGE}
+                    """
                     
                     withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
-                        sh "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
-                        sh "docker push ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER}"
-                        sh "docker push ${DOCKER_HUB_IMAGE}:latest"
+                        sh """
+                            set -x
+                            echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+                            docker push ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER}
+                            docker push ${DOCKER_HUB_IMAGE}:latest
+                        """
                     }
                 }
             }
