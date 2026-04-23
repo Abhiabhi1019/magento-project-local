@@ -159,11 +159,10 @@ pipeline {
                 docker compose down --remove-orphans || true
 
                 # Build only app images
-                docker compose build nginx php db redis opensearch
+                docker compose build nginx php db redis opensearch varnish
 
-                # Start only the 5 app services
-                # Jenkins is excluded automatically (profiles: [ci] not activated)
-                docker compose up -d nginx php db redis opensearch
+                # Start only the services
+                docker compose up -d nginx php db redis opensearch varnish
 
                 echo ""
                 echo "=== CONTAINER STATUS ==="
@@ -208,6 +207,21 @@ pipeline {
                     sleep 5
                 done
                 echo "OK: OpenSearch is ready."
+
+                echo "=== WAITING FOR VARNISH ==="
+                RETRIES=10
+                COUNT=0
+                until docker compose exec -T nginx curl -sf http://varnish/health > /dev/null 2>&1; do
+                    COUNT=$((COUNT+1))
+                    if [ $COUNT -ge $RETRIES ]; then
+                        echo "ERROR: Varnish did not become ready in time"
+                        docker compose logs varnish
+                        exit 1
+                    fi
+                    echo "  Varnish not ready yet (attempt $COUNT/$RETRIES)..."
+                    sleep 2
+                done
+                echo "OK: Varnish is ready."
                 '''
             }
         }
@@ -278,7 +292,7 @@ pipeline {
                     if [ ! -f app/etc/env.php ]; then
                         echo 'No env.php — running fresh Magento install first...'
                         php -d memory_limit=-1 bin/magento setup:install \
-                            --base-url=http://localhost:8080 \
+                            --base-url=https://localhost \
                             --db-host=db \
                             --db-name=magento \
                             --db-user=root \
@@ -297,6 +311,18 @@ pipeline {
                             --opensearch-port=9200 \
                             --no-interaction
                     fi
+
+                    echo '-- Configuring Infrastructure (Redis, OpenSearch, Varnish) --'
+                    php bin/magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction
+                    php bin/magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-log-level=4 --session-save-redis-db=2 --no-interaction
+                    php bin/magento config:set catalog/search/engine opensearch
+                    php bin/magento config:set catalog/search/opensearch_server_hostname opensearch
+                    php bin/magento config:set system/full_page_cache/caching_application 2
+                    php bin/magento config:set system/full_page_cache/varnish/backend_host nginx
+                    php bin/magento config:set system/full_page_cache/varnish/backend_port 8080
+
+                    echo '-- Deploying Sample Data --'
+                    php -d memory_limit=-1 bin/magento sampledata:deploy --no-interaction
 
                     echo '-- 1. DI Compile --'
                     php -d memory_limit=-1 bin/magento setup:di:compile
