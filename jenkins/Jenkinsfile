@@ -45,7 +45,13 @@ pipeline {
         stage('Validate & Setup SSL') {
             steps {
                 sh '''
-                set -x
+                set -ex
+                echo "=== VALIDATING FILES ==="
+                [ -f docker-compose.yml ] || { echo "ERROR: docker-compose.yml missing"; exit 1; }
+                [ -d magento ] || { echo "ERROR: magento/ directory missing"; exit 1; }
+                [ -f magento/composer.json ] || { echo "ERROR: composer.json missing"; exit 1; }
+                [ -f scripts/generate-ssl.sh ] || { echo "ERROR: generate-ssl.sh missing"; exit 1; }
+                
                 chmod +x scripts/generate-ssl.sh
                 ./scripts/generate-ssl.sh
                 '''
@@ -55,7 +61,7 @@ pipeline {
         stage('Start Infrastructure') {
             steps {
                 sh '''
-                set -x
+                set -ex
                 docker compose down --remove-orphans || true
                 docker compose build nginx php db redis opensearch varnish
                 docker compose up -d nginx php db redis opensearch varnish
@@ -66,7 +72,7 @@ pipeline {
         stage('Wait & Permissions') {
             steps {
                 sh '''
-                set -x
+                set -ex
                 # Wait for DB with timeout
                 COUNT=0
                 MAX_RETRIES=20
@@ -80,7 +86,7 @@ pipeline {
                 # Fix Permissions strictly using chown (as advised)
                 PHP_ID=$(docker compose ps -q php)
                 docker exec --user root "${PHP_ID}" bash -c "
-                    set -x
+                    set -ex
                     cd /var/www/html && \
                     mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media && \
                     chown -R www-data:www-data /var/www/html && \
@@ -93,9 +99,9 @@ pipeline {
         stage('Composer & Magento Setup') {
             steps {
                 sh '''
-                set -x
+                set -ex
                 docker compose exec -T php bash -c "
-                    set -e
+                    set -ex
                     cd /var/www/html
                     export COMPOSER_MEMORY_LIMIT=-1
                     composer install --no-interaction --prefer-dist --optimize-autoloader
