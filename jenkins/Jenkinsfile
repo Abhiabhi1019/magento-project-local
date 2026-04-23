@@ -255,6 +255,7 @@ pipeline {
                 fi
 
                 docker exec --user root "${PHP_ID}" bash -c "
+                    cd /var/www/html && \
                     mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media && \
                     chown -R www-data:www-data /var/www/html && \
                     chmod -R ug+rw var generated pub/static pub/media
@@ -301,8 +302,17 @@ pipeline {
                         return 0
                     }
 
-                    if [ ! -f app/etc/env.php ]; then
-                        echo 'No env.php — running fresh Magento install first...'
+                    is_magento_installed() {
+                        if [ ! -f app/etc/env.php ]; then return 1; fi
+                        # Check if a core table exists to verify DB initialization
+                        php bin/magento setup:db:status --no-interaction > /dev/null 2>&1
+                        return $?
+                    }
+
+                    if ! is_magento_installed; then
+                        echo 'Magento is not fully installed or database is missing — running setup:install...'
+                        # Force removal of env.php to ensure fresh install if DB is missing
+                        rm -f app/etc/env.php
                         run_magento setup:install \
                             --base-url=https://localhost \
                             --db-host=db \
