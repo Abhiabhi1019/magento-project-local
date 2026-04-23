@@ -255,15 +255,13 @@ pipeline {
                     exit 1
                 fi
 
-                echo "--- Synchronizing permissions (Root -> www-data) ---"
+                echo "--- Synchronizing permissions (chown www-data:www-data) ---"
                 docker exec --user root "${PHP_ID}" bash -c "
                     cd /var/www/html && \
                     mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media && \
                     chown -R www-data:www-data /var/www/html && \
-                    find . -type d -exec chmod 777 {} + && \
-                    find . -type f -exec chmod 666 {} + && \
                     chmod +x bin/magento
-                " || echo "WARNING: Permission sync had some errors, continuing..."
+                " || echo "WARNING: chown failed. Check if your filesystem supports cross-user ownership."
 
                 docker compose exec -T php bash -c "
                     set -e
