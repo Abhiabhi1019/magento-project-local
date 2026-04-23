@@ -248,22 +248,17 @@ pipeline {
                 echo "=== COMPOSER INSTALL ==="
 
                 # Ensure writable dirs exist and are owned by www-data (33:33)
-                PHP=$(docker compose ps -q php)
-                docker exec --user root "${PHP}" bash -c "
-                    mkdir -p /var/www/html/var/cache \
-                             /var/www/html/var/page_cache \
-                             /var/www/html/var/session \
-                             /var/www/html/var/log \
-                             /var/www/html/generated \
-                             /var/www/html/pub/static \
-                             /var/www/html/pub/media && \
+                PHP_ID=$(docker compose ps -q php)
+                if [ -z "$PHP_ID" ]; then
+                    echo "ERROR: PHP container not found. Cannot set permissions."
+                    exit 1
+                fi
+
+                docker exec --user root "${PHP_ID}" bash -c "
+                    mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media && \
                     chown -R www-data:www-data /var/www/html && \
-                    chmod -R ug+rw \
-                        /var/www/html/var \
-                        /var/www/html/generated \
-                        /var/www/html/pub/static \
-                        /var/www/html/pub/media
-                "
+                    chmod -R ug+rw var generated pub/static pub/media
+                " || echo "WARNING: Permission sync failed. This might be non-critical if dirs already exist."
 
                 docker compose exec -T php bash -c "
                     set -e
@@ -292,16 +287,23 @@ pipeline {
                     cd /var/www/html
 
                     echo '-- Clearing stale generated code and all caches --'
-                    rm -rf generated/* \
-                           var/cache/* \
-                           var/page_cache/* \
-                           var/view_preprocessed/* \
-                           var/di/* \
-                           var/generation/*
+                    # Use find or specific dirs to avoid exit code 2 on empty globs
+                    find generated var/cache var/page_cache var/view_preprocessed var/di var/generation -mindepth 1 -delete 2>/dev/null || true
+
+                    run_magento() {
+                        echo "Running: bin/magento $@"
+                        php -d memory_limit=-1 bin/magento "$@"
+                        STATUS=$?
+                        if [ $STATUS -ne 0 ]; then
+                            echo "❌ ERROR: bin/magento $@ failed with exit code $STATUS"
+                            return $STATUS
+                        fi
+                        return 0
+                    }
 
                     if [ ! -f app/etc/env.php ]; then
                         echo 'No env.php — running fresh Magento install first...'
-                        php -d memory_limit=-1 bin/magento setup:install \
+                        run_magento setup:install \
                             --base-url=https://localhost \
                             --db-host=db \
                             --db-name=magento \
@@ -319,32 +321,32 @@ pipeline {
                             --search-engine=opensearch \
                             --opensearch-host=opensearch \
                             --opensearch-port=9200 \
-                            --no-interaction
+                            --no-interaction || exit 1
                     fi
 
                     echo '-- Configuring Infrastructure (Redis, OpenSearch, Varnish) --'
-                    php bin/magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction || true
-                    php bin/magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-log-level=4 --session-save-redis-db=2 --no-interaction || true
-                    php bin/magento config:set catalog/search/engine opensearch || true
-                    php bin/magento config:set catalog/search/opensearch_server_hostname opensearch || true
-                    php bin/magento config:set system/full_page_cache/caching_application 2 || true
-                    php bin/magento config:set system/full_page_cache/varnish/backend_host nginx || true
-                    php bin/magento config:set system/full_page_cache/varnish/backend_port 8080 || true
+                    run_magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction || echo "Non-critical config failure"
+                    run_magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-log-level=4 --session-save-redis-db=2 --no-interaction || echo "Non-critical config failure"
+                    run_magento config:set catalog/search/engine opensearch || echo "Non-critical config failure"
+                    run_magento config:set catalog/search/opensearch_server_hostname opensearch || echo "Non-critical config failure"
+                    run_magento config:set system/full_page_cache/caching_application 2 || echo "Non-critical config failure"
+                    run_magento config:set system/full_page_cache/varnish/backend_host nginx || echo "Non-critical config failure"
+                    run_magento config:set system/full_page_cache/varnish/backend_port 8080 || echo "Non-critical config failure"
 
                     echo '-- Deploying Sample Data --'
-                    php -d memory_limit=-1 bin/magento sampledata:deploy --no-interaction || echo "WARNING: Sample data deployment failed (possibly due to missing auth.json credentials). Continuing..."
+                    run_magento sampledata:deploy --no-interaction || echo "WARNING: Sample data deployment failed (possibly due to missing auth.json credentials). Continuing..."
 
                     echo '-- 1. DI Compile --'
-                    php -d memory_limit=-1 bin/magento setup:di:compile
+                    run_magento setup:di:compile || exit 1
 
                     echo '-- 2. Setup Upgrade --'
-                    php -d memory_limit=-1 bin/magento setup:upgrade --keep-generated --no-interaction
+                    run_magento setup:upgrade --keep-generated --no-interaction || exit 1
 
                     echo '-- 3. Static Content Deploy --'
-                    php -d memory_limit=-1 bin/magento setup:static-content:deploy -f en_US
+                    run_magento setup:static-content:deploy -f en_US || exit 1
 
                     echo '-- 4. Cache flush --'
-                    php bin/magento cache:flush
+                    run_magento cache:flush || exit 1
                 "
                 '''
             }
