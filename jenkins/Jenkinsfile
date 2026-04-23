@@ -107,10 +107,13 @@ pipeline {
                     composer install --no-interaction --prefer-dist --optimize-autoloader
 
                     run_magento() {
-                        php -d memory_limit=-1 bin/magento \\\"$@\\\"
+                        echo "=> Executing: bin/magento $@"
+                        php -d memory_limit=-1 bin/magento "$@"
                     }
 
-                    if [ ! -f app/etc/env.php ]; then
+                    if ! is_magento_installed; then
+                        echo 'Magento is not fully installed or database is missing — running setup:install...'
+                        rm -f app/etc/env.php
                         run_magento setup:install \
                             --base-url=https://localhost \
                             --db-host=db --db-name=magento --db-user=root --db-password=root \
@@ -120,17 +123,23 @@ pipeline {
                             --no-interaction
                     fi
 
-                    # Apply Infrastructure Configs
+                    echo '-- 1. DI Compile (Generates Proxies/Factories early) --'
+                    run_magento setup:di:compile
+
+                    echo '-- 2. Configuring Infrastructure (Redis, Varnish) --'
                     run_magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction || true
                     run_magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-db=2 --no-interaction || true
                     run_magento config:set system/full_page_cache/caching_application 2 || true
                     run_magento config:set system/full_page_cache/varnish/backend_host nginx || true
                     run_magento config:set system/full_page_cache/varnish/backend_port 8080 || true
                     
-                    # Critical Build Steps
-                    run_magento setup:di:compile
+                    echo '-- 3. Setup Upgrade --'
                     run_magento setup:upgrade --keep-generated --no-interaction
+
+                    echo '-- 4. Static Content Deploy --'
                     run_magento setup:static-content:deploy -f en_US
+
+                    echo '-- 5. Cache flush --'
                     run_magento cache:flush
                 "
                 '''
