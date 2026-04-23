@@ -1,14 +1,6 @@
-.git
-.gitignore
-node_modules
-
-# Magento runtime (OK to ignore)
-magento/var/
-magento/generated/
-magento/pub/static/
-
-# ❌ DO NOT ignore vendor if using composer inside container
-# magento/vendor/   ← REMOVE THIS if present
-
-# Optional
-*.log
+vendor/
+node_modules/
+var/
+generated/
+pub/static/
+pub/media/
