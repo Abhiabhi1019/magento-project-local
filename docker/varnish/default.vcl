@@ -18,6 +18,10 @@ acl purge {
 }
 
 sub vcl_recv {
+    if (req.url == "/health") {
+        return (synth(200, "OK"));
+    }
+
     if (req.method == "PURGE") {
         if (!client.ip ~ purge) {
             return (synth(405, "Not allowed."));
