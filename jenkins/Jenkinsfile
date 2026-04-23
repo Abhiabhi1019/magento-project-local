@@ -67,12 +67,20 @@ pipeline {
             steps {
                 sh '''
                 set -x
-                # Wait for DB
-                until docker compose exec -T db mysqladmin ping -h localhost -uroot -proot --silent; do sleep 5; done
+                # Wait for DB with timeout
+                COUNT=0
+                MAX_RETRIES=20
+                until docker compose exec -T db mysqladmin ping -h localhost -uroot -proot --silent || [ $COUNT -eq $MAX_RETRIES ]; do
+                    sleep 5
+                    COUNT=$((COUNT+1))
+                    echo "Waiting for DB... ($COUNT/$MAX_RETRIES)"
+                done
+                if [ $COUNT -eq $MAX_RETRIES ]; then echo "ERROR: DB timeout"; exit 1; fi
                 
                 # Fix Permissions strictly using chown (as advised)
                 PHP_ID=$(docker compose ps -q php)
                 docker exec --user root "${PHP_ID}" bash -c "
+                    set -x
                     cd /var/www/html && \
                     mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media && \
                     chown -R www-data:www-data /var/www/html && \
@@ -146,7 +154,14 @@ pipeline {
         }
         failure {
             echo '❌ Pipeline FAILED! Check logs.'
-            sh 'docker compose logs --tail=50 php'
+            sh '''
+                set -x
+                docker compose ps
+                docker compose logs --tail=50 php
+                docker compose logs --tail=50 nginx
+                ls -la
+                ls -la magento/
+            '''
         }
         always {
             sh 'docker logout || true'
