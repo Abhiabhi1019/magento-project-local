@@ -248,18 +248,22 @@ pipeline {
                 echo "=== COMPOSER INSTALL ==="
 
                 # Ensure writable dirs exist and are owned by www-data (33:33)
+                # Ensure writable dirs exist and are owned by www-data (33:33)
                 PHP_ID=$(docker compose ps -q php)
                 if [ -z "$PHP_ID" ]; then
                     echo "ERROR: PHP container not found. Cannot set permissions."
                     exit 1
                 fi
 
+                echo "--- Synchronizing permissions (Root -> www-data) ---"
                 docker exec --user root "${PHP_ID}" bash -c "
                     cd /var/www/html && \
                     mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media && \
                     chown -R www-data:www-data /var/www/html && \
-                    chmod -R ug+rw var generated pub/static pub/media
-                " || echo "WARNING: Permission sync failed. This might be non-critical if dirs already exist."
+                    find . -type d -exec chmod 777 {} + && \
+                    find . -type f -exec chmod 666 {} + && \
+                    chmod +x bin/magento
+                " || echo "WARNING: Permission sync had some errors, continuing..."
 
                 docker compose exec -T php bash -c "
                     set -e
