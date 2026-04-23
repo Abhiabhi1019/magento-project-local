@@ -117,6 +117,8 @@ pipeline {
 
                 # ── Required config files ────────────────────────────────────
                 check_file "docker/nginx/default.conf"
+                check_file "docker/varnish/default.vcl"
+                check_file "scripts/generate-ssl.sh"
                 check_file "docker/php/Dockerfile"
                 check_file "jenkins/Dockerfile"
                 check_file "docker-compose.yml"
@@ -139,6 +141,14 @@ pipeline {
                 echo "Compose version:  $(docker compose version)"
                 echo "=== VALIDATION PASSED ==="
                 '''
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        stage('Generate SSL') {
+        // ────────────────────────────────────────────────────────────────────
+            steps {
+                sh 'chmod +x scripts/generate-ssl.sh && ./scripts/generate-ssl.sh'
             }
         }
 
