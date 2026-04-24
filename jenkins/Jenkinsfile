@@ -106,6 +106,12 @@ pipeline {
                     export COMPOSER_MEMORY_LIMIT=-1
                     composer install --no-interaction --prefer-dist --optimize-autoloader
 
+                    is_magento_installed() {
+                        if [ ! -f app/etc/env.php ]; then return 1; fi
+                        php bin/magento setup:db:status --no-interaction > /dev/null 2>&1
+                        return $?
+                    }
+
                     run_magento() {
                         echo "=> Executing: bin/magento $@"
                         php -d memory_limit=-1 bin/magento "$@"
@@ -127,11 +133,11 @@ pipeline {
                     run_magento setup:di:compile
 
                     echo '-- 2. Configuring Infrastructure (Redis, Varnish) --'
-                    run_magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction || true
-                    run_magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-db=2 --no-interaction || true
-                    run_magento config:set system/full_page_cache/caching_application 2 || true
-                    run_magento config:set system/full_page_cache/varnish/backend_host nginx || true
-                    run_magento config:set system/full_page_cache/varnish/backend_port 8080 || true
+                    run_magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction || echo "Non-critical config failure"
+                    run_magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-db=2 --no-interaction || echo "Non-critical config failure"
+                    run_magento config:set system/full_page_cache/caching_application 2 || echo "Non-critical config failure"
+                    run_magento config:set system/full_page_cache/varnish/backend_host nginx || echo "Non-critical config failure"
+                    run_magento config:set system/full_page_cache/varnish/backend_port 8080 || echo "Non-critical config failure"
                     
                     echo '-- 3. Setup Upgrade --'
                     run_magento setup:upgrade --keep-generated --no-interaction
