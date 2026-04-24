@@ -13,6 +13,8 @@ services:
     depends_on:
       php:
         condition: service_started
+      varnish:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/health"]
@@ -24,8 +26,7 @@ services:
   varnish:
     image: varnish:7
     container_name: magento-varnish
-    depends_on:
-      - nginx
+    # Removed circular dependency on nginx
     volumes:
       - ${WORKSPACE_HOST:-.}/docker/varnish/default.vcl:/etc/varnish/default.vcl:ro
     command: "-f /etc/varnish/default.vcl -s malloc,128M"
