@@ -20,13 +20,7 @@ pipeline {
             }
         }
 
-        stage('Fix Permissions') {
-            steps {
-                sh '''
-                sudo chown -R $(id -u):$(id -g) .
-                '''
-            }
-        }
+
 
         stage('Start Containers') {
             steps {
