@@ -6,6 +6,10 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    environment {
+        COMPOSE_PROJECT_NAME = "magento-project-local"
+    }
+
     stages {
 
         stage('Clean Workspace') {
@@ -24,10 +28,16 @@ pipeline {
 
         stage('Start Containers') {
             steps {
-                sh '''
-                docker compose down || true
-                docker compose up -d --build
-                '''
+                script {
+                    def hostJenkinsHome = sh(script: "docker inspect \$(hostname) --format '{{ range .Mounts }}{{ if eq .Destination \"/var/jenkins_home\" }}{{ .Source }}{{ end }}{{ end }}'", returnStdout: true).trim()
+                    def workspaceSuffix = env.WORKSPACE.replace('/var/jenkins_home', '')
+                    env.WORKSPACE_HOST = hostJenkinsHome + workspaceSuffix
+
+                    sh '''
+                    docker compose down || true
+                    docker compose up -d --build
+                    '''
+                }
             }
         }
 
