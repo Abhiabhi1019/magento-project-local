@@ -100,7 +100,7 @@ pipeline {
             steps {
                 sh '''
                 set -ex
-                docker compose exec -T php bash -c "
+                docker compose exec -T php bash << 'EOF'
                     set -ex
                     cd /var/www/html
                     export COMPOSER_MEMORY_LIMIT=-1
@@ -147,7 +147,8 @@ pipeline {
 
                     echo '-- 5. Cache flush --'
                     run_magento cache:flush
-                "
+EOF
+
                 '''
             }
         }
