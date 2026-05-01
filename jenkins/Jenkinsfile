@@ -4,211 +4,87 @@ pipeline {
     options {
         timeout(time: 90, unit: 'MINUTES')
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-    }
-
-    environment {
-        COMPOSE_PROJECT_NAME = "magento-project-local"
-        DOCKER_GID = sh(script: "stat -c '%g' /var/run/docker.sock", returnStdout: true).trim()
-        
-        // --- Docker Hub Config ---
-        DOCKER_HUB_IMAGE = 'your_dockerhub_username/magento-php'
-        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
     }
 
     stages {
-        stage('Checkout & Debug') {
+
+        stage('Clean Workspace') {
             steps {
-                script {
-                    echo "=== CHECKOUT & DEBUG ==="
-                    sh 'set -x && ls -la'
-                    
-                    // Compute HOST path for bind mounts
-                    def hostJenkinsHome = sh(
-                        script: "docker inspect \$(hostname) --format '{{ range .Mounts }}{{ if eq .Destination \"/var/jenkins_home\" }}{{ .Source }}{{ end }}{{ end }}'",
-                        returnStdout: true
-                    ).trim()
-                    
-                    if (!hostJenkinsHome) error("Could not determine HOST path of /var/jenkins_home")
-                    
-                    def workspaceSuffix = env.WORKSPACE.replace('/var/jenkins_home', '')
-                    env.WORKSPACE_HOST = hostJenkinsHome + workspaceSuffix
-                    
-                    sh """
-                        echo "WORKSPACE_HOST=${env.WORKSPACE_HOST}" > .env
-                        echo "DOCKER_GID=${env.DOCKER_GID}" >> .env
-                    """
-                }
+                cleanWs()
             }
         }
 
-        stage('Validate & Setup SSL') {
+        stage('Checkout Code') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Fix Permissions') {
             steps {
                 sh '''
-                set -ex
-                echo "=== VALIDATING FILES ==="
-                [ -f docker-compose.yml ] || { echo "ERROR: docker-compose.yml missing"; exit 1; }
-                [ -d magento ] || { echo "ERROR: magento/ directory missing"; exit 1; }
-                [ -f magento/composer.json ] || { echo "ERROR: composer.json missing"; exit 1; }
-                [ -f scripts/generate-ssl.sh ] || { echo "ERROR: generate-ssl.sh missing"; exit 1; }
-                
-                chmod +x scripts/generate-ssl.sh
-                ./scripts/generate-ssl.sh
+                sudo chown -R $(id -u):$(id -g) .
                 '''
             }
         }
 
-        stage('Start Infrastructure') {
+        stage('Start Containers') {
             steps {
                 sh '''
-                set -ex
-                docker compose down --remove-orphans || true
-                docker compose build nginx php db redis opensearch varnish
-                docker compose up -d nginx php db redis opensearch varnish
+                docker compose down || true
+                docker compose up -d --build
                 '''
             }
         }
 
-        stage('Wait & Permissions') {
+        stage('Fix Container Permissions') {
             steps {
                 sh '''
-                set -ex
-                # Wait for DB with timeout
-                COUNT=0
-                MAX_RETRIES=20
-                until docker compose exec -T db mysqladmin ping -h localhost -uroot -proot --silent || [ $COUNT -eq $MAX_RETRIES ]; do
-                    sleep 5
-                    COUNT=$((COUNT+1))
-                    echo "Waiting for DB... ($COUNT/$MAX_RETRIES)"
-                done
-                if [ $COUNT -eq $MAX_RETRIES ]; then echo "ERROR: DB timeout"; exit 1; fi
-                
-                # Fix Permissions strictly (as advised: 755/775 setup)
-                # Jenkins UID is 1000, PHP www-data GID is 33
-                PHP_ID=$(docker compose ps -q php)
-                docker exec --user root "${PHP_ID}" bash -c "
-                    set -ex
-                    cd /var/www/html && \
-                    mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media && \
-                    chown -R 1000:33 /var/www/html && \
-                    find . -type d -exec chmod 775 {} + && \
-                    find . -type f -exec chmod 664 {} + && \
-                    chmod +x bin/magento
+                docker compose exec -u root php bash -c "
+                chown -R www-data:www-data /var/www/html
+                chmod -R 755 /var/www/html
                 "
                 '''
             }
         }
 
-        stage('Composer & Magento Setup') {
+        stage('Composer Install') {
             steps {
                 sh '''
-                set -ex
-                docker compose exec -T php bash << 'EOF'
-                    set -ex
-                    cd /var/www/html
-                    export COMPOSER_MEMORY_LIMIT=-1
-                    composer install --no-interaction --prefer-dist --optimize-autoloader
-
-                    is_magento_installed() {
-                        if [ ! -f app/etc/env.php ]; then return 1; fi
-                        php bin/magento setup:db:status --no-interaction > /dev/null 2>&1
-                        return $?
-                    }
-
-                    run_magento() {
-                        echo "=> Executing: bin/magento $@"
-                        php -d memory_limit=-1 bin/magento "$@"
-                    }
-
-                    if ! is_magento_installed; then
-                        echo 'Magento is not fully installed or database is missing — running setup:install...'
-                        rm -f app/etc/env.php
-                        run_magento setup:install \
-                            --base-url=https://localhost \
-                            --db-host=db --db-name=magento --db-user=root --db-password=root \
-                            --admin-firstname=Admin --admin-lastname=User --admin-user=admin --admin-password=Admin123@ --admin-email=admin@example.com \
-                            --language=en_US --currency=USD --timezone=America/Chicago \
-                            --use-rewrites=1 --search-engine=opensearch --opensearch-host=opensearch --opensearch-port=9200 \
-                            --no-interaction
-                    fi
-
-                    echo '-- 1. DI Compile (Generates Proxies/Factories early) --'
-                    run_magento setup:di:compile
-
-                    echo '-- 2. Configuring Infrastructure (Redis, Varnish) --'
-                    run_magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction || echo "Non-critical config failure"
-                    run_magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-db=2 --no-interaction || echo "Non-critical config failure"
-                    run_magento config:set system/full_page_cache/caching_application 2 || echo "Non-critical config failure"
-                    run_magento config:set system/full_page_cache/varnish/backend_host nginx || echo "Non-critical config failure"
-                    run_magento config:set system/full_page_cache/varnish/backend_port 8080 || echo "Non-critical config failure"
-                    
-                    echo '-- 3. Setup Upgrade --'
-                    run_magento setup:upgrade --keep-generated --no-interaction
-
-                    echo '-- 4. Static Content Deploy --'
-                    run_magento setup:static-content:deploy -f en_US
-
-                    echo '-- 5. Cache flush --'
-                    run_magento cache:flush
-EOF
-
+                docker compose exec -T php bash -c "
+                cd /var/www/html
+                composer install --no-interaction --prefer-dist --no-progress
+                "
                 '''
             }
         }
 
-        stage('Publish to Docker Hub') {
+        stage('Magento Setup') {
             steps {
-                script {
-                    echo "=== PUBLISHING IMAGE ==="
-                    // Build context is PROJECT ROOT (.) so we can access magento/ folder if needed
-                    // Dockerfile is at docker/php/Dockerfile
-                    sh """
-                        set -x
-                        docker build -t ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER} \
-                                     -t ${DOCKER_HUB_IMAGE}:latest \
-                                     -f docker/php/Dockerfile .
-                        
-                        echo "--- Verifying images ---"
-                        docker images | grep ${DOCKER_HUB_IMAGE}
-                    """
-                    
-                    withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
-                        sh """
-                            set -x
-                            echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                            docker push ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER}
-                            docker push ${DOCKER_HUB_IMAGE}:latest
-                        """
-                    }
-                }
+                sh '''
+                docker compose exec -T php bash -c "
+                cd /var/www/html
+
+                php bin/magento setup:upgrade || true
+                php bin/magento cache:flush || true
+                "
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh 'docker ps'
             }
         }
     }
 
     post {
-        success {
-            echo '✅ Pipeline SUCCEEDED!'
-        }
-        failure {
-            echo '❌ Pipeline FAILED! Check logs.'
-            sh '''
-                set -x
-                docker compose ps
-                docker compose logs --tail=50 php
-                docker compose logs --tail=50 nginx
-                ls -la
-                ls -la magento/
-            '''
-        }
         always {
-            // Restore permissions back to Jenkins so it doesn't fail on next git checkout/clean
             sh '''
-                set -x
-                PHP_ID=$(docker compose ps -q php || true)
-                if [ -n "$PHP_ID" ]; then
-                    docker exec --user root "${PHP_ID}" bash -c "chown -R 1000:1000 /var/www/html" || true
-                fi
-                docker logout || true
+            docker compose exec -u root php bash -c "
+            chown -R 1000:1000 /var/www/html
+            " || true
             '''
         }
     }
