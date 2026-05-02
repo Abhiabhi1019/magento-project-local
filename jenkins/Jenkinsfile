@@ -137,10 +137,25 @@ pipeline {
 
     post {
         always {
-            sh '''
-            docker exec -u root magento-php chown -R 1000:1000 /var/www/html || true
-            docker logout || true
-            '''
+            script {
+                // Ensure WORKSPACE_HOST is available for the permission fix
+                if (!env.WORKSPACE_HOST) {
+                    try {
+                        def hostJenkinsHome = sh(script: "docker inspect \$(hostname) --format '{{ range .Mounts }}{{ if eq .Destination \"/var/jenkins_home\" }}{{ .Source }}{{ end }}{{ end }}'", returnStdout: true).trim()
+                        if (hostJenkinsHome) {
+                            env.WORKSPACE_HOST = hostJenkinsHome + env.WORKSPACE.replace('/var/jenkins_home', '')
+                        }
+                    } catch (e) {
+                        echo "Warning: Could not determine WORKSPACE_HOST for permission cleanup."
+                    }
+                }
+
+                // Use a one-off container to reset permissions even if the main stack is down
+                if (env.WORKSPACE_HOST) {
+                    sh "docker run --rm -v ${env.WORKSPACE_HOST}:/workspace -u root alpine chown -R 1000:1000 /workspace || true"
+                }
+                sh 'docker logout || true'
+            }
         }
     }
 }
