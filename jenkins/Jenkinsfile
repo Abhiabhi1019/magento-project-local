@@ -4,14 +4,16 @@ pipeline {
     options {
         timeout(time: 90, unit: 'MINUTES')
         disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
     environment {
         COMPOSE_PROJECT_NAME = "magento-project-local"
+        DOCKER_HUB_IMAGE = 'your_dockerhub_username/magento-php'
+        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
     }
 
     stages {
-
         stage('Clean Workspace') {
             steps {
                 cleanWs()
@@ -24,29 +26,51 @@ pipeline {
             }
         }
 
-
-
-        stage('Start Containers') {
+        stage('Build Docker Image') {
             steps {
-                script {
-                    def hostJenkinsHome = sh(script: "docker inspect \$(hostname) --format '{{ range .Mounts }}{{ if eq .Destination \"/var/jenkins_home\" }}{{ .Source }}{{ end }}{{ end }}'", returnStdout: true).trim()
-                    def workspaceSuffix = env.WORKSPACE.replace('/var/jenkins_home', '')
-                    env.WORKSPACE_HOST = hostJenkinsHome + workspaceSuffix
+                sh "docker build -t ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER} -t ${DOCKER_HUB_IMAGE}:latest -f docker/php/Dockerfile ."
+            }
+        }
 
-                    sh '''
-                    docker compose down || true
-                    docker compose up -d --build
-                    '''
+        stage('Login Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
+                    sh "echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin"
                 }
             }
         }
 
-        stage('Fix Container Permissions') {
+        stage('Push Image (versioned)') {
+            steps {
+                sh "docker push ${DOCKER_HUB_IMAGE}:${BUILD_NUMBER}"
+                sh "docker push ${DOCKER_HUB_IMAGE}:latest"
+            }
+        }
+
+        stage('Start Containers') {
+            steps {
+                script {
+                    // Resolve host path for volume mounting in DooD environment
+                    def hostJenkinsHome = sh(script: "docker inspect \$(hostname) --format '{{ range .Mounts }}{{ if eq .Destination \"/var/jenkins_home\" }}{{ .Source }}{{ end }}{{ end }}'", returnStdout: true).trim()
+                    if (!hostJenkinsHome) error("Could not determine HOST path of /var/jenkins_home")
+                    
+                    env.WORKSPACE_HOST = hostJenkinsHome + env.WORKSPACE.replace('/var/jenkins_home', '')
+                    
+                    sh "docker compose down --remove-orphans || true"
+                    sh "docker compose up -d"
+                }
+            }
+        }
+
+        stage('Fix Permissions') {
             steps {
                 sh '''
-                docker compose exec -u root php bash -c "
-                chown -R www-data:www-data /var/www/html
-                chmod -R 755 /var/www/html
+                docker exec -u root magento-php bash -c "
+                    mkdir -p var/cache var/page_cache var/session var/log generated pub/static pub/media
+                    chown -R 1000:33 /var/www/html
+                    find . -type d -exec chmod 775 {} +
+                    find . -type f -exec chmod 664 {} +
+                    chmod +x bin/magento
                 "
                 '''
             }
@@ -54,31 +78,59 @@ pipeline {
 
         stage('Composer Install') {
             steps {
-                sh '''
-                docker compose exec -T php bash -c "
-                cd /var/www/html
-                composer install --no-interaction --prefer-dist --no-progress
-                "
-                '''
+                sh 'docker exec -u www-data magento-php composer install --no-interaction --prefer-dist --optimize-autoloader'
             }
         }
 
         stage('Magento Setup') {
             steps {
                 sh '''
-                docker compose exec -T php bash -c "
-                cd /var/www/html
-
-                php bin/magento setup:upgrade || true
-                php bin/magento cache:flush || true
+                docker exec -u www-data magento-php bash -c "
+                    php bin/magento setup:upgrade --keep-generated --no-interaction
+                    php bin/magento setup:di:compile
+                    php bin/magento setup:static-content:deploy -f en_US
                 "
+                '''
+            }
+        }
+
+        stage('Configure Redis') {
+            steps {
+                sh '''
+                docker exec -u www-data magento-php bash -c "
+                    php bin/magento setup:config:set --cache-backend=redis --cache-backend-redis-server=redis --cache-backend-redis-port=6379 --cache-backend-redis-db=0 --no-interaction
+                    php bin/magento setup:config:set --session-save=redis --session-save-redis-host=redis --session-save-redis-port=6379 --session-save-redis-db=2 --no-interaction
+                "
+                '''
+            }
+        }
+
+        stage('Configure Varnish') {
+            steps {
+                sh '''
+                docker exec -u www-data magento-php bash -c "
+                    php bin/magento config:set system/full_page_cache/caching_application 2
+                    php bin/magento config:set system/full_page_cache/varnish/backend_host nginx
+                    php bin/magento config:set system/full_page_cache/varnish/backend_port 8080
+                "
+                '''
+            }
+        }
+
+        stage('Setup SSL') {
+            steps {
+                sh '''
+                chmod +x scripts/generate-ssl.sh
+                ./scripts/generate-ssl.sh
+                docker restart magento-nginx
                 '''
             }
         }
 
         stage('Verify') {
             steps {
-                sh 'docker ps'
+                sh 'docker compose ps'
+                sh 'curl -k -I https://localhost || true'
             }
         }
     }
@@ -86,9 +138,8 @@ pipeline {
     post {
         always {
             sh '''
-            docker compose exec -u root php bash -c "
-            chown -R 1000:1000 /var/www/html
-            " || true
+            docker exec -u root magento-php chown -R 1000:1000 /var/www/html || true
+            docker logout || true
             '''
         }
     }
