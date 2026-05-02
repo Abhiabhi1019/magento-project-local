@@ -9,8 +9,8 @@ pipeline {
 
     environment {
         COMPOSE_PROJECT_NAME = "magento-project-local"
-        DOCKER_HUB_IMAGE = 'your_dockerhub_username/magento-php'
-        DOCKER_CREDENTIALS_ID = 'dockerhub-credentials'
+        DOCKER_HUB_IMAGE = 'abhiabhi007/magento-php'
+        DOCKER_CREDENTIALS_ID = 'docker-hub'
     }
 
     stages {
